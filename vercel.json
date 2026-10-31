@@ -1,0 +1,42 @@
+{
+  "framework": null,
+  "outputDirectory": "2026-10-31-NodeCanvas-v1.5.0/web",
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/2026-10-31-index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "no-referrer"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:7330; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+        }
+      ]
+    },
+    {
+      "source": "/2026-10-31-NodeCanvas-Setup-v1.5.0.exe",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/octet-stream"
+        },
+        {
+          "key": "Content-Disposition",
+          "value": "attachment; filename=\"2026-10-31-NodeCanvas-Setup-v1.5.0.exe\""
+        }
+      ]
+    }
+  ]
+}
