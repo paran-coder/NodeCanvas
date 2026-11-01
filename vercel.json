@@ -1,6 +1,6 @@
 {
   "framework": null,
-  "outputDirectory": "2026-11-01-NodeCanvas-v1.5.2/web",
+  "outputDirectory": "2026-11-01-NodeCanvas-v1.6.0/web",
   "rewrites": [
     {
       "source": "/",
@@ -26,7 +26,7 @@
       ]
     },
     {
-      "source": "/2026-10-31-NodeCanvas-Setup-v1.5.2.exe",
+      "source": "/2026-10-31-NodeCanvas-Setup-v1.6.0.exe",
       "headers": [
         {
           "key": "Content-Type",
@@ -34,7 +34,7 @@
         },
         {
           "key": "Content-Disposition",
-          "value": "attachment; filename=\"2026-10-31-NodeCanvas-Setup-v1.5.2.exe\""
+          "value": "attachment; filename=\"2026-10-31-NodeCanvas-Setup-v1.6.0.exe\""
         }
       ]
     }
