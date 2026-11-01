@@ -98,3 +98,6 @@ body:not(.show-library){height:100dvh;display:flex;flex-direction:column}body:no
 .port-skill{--port-ink:#a36b26}
 
 .skill-node .skill-card-body{padding:16px}.skill-node .skill-card-body p{margin:0;font-size:13px;line-height:1.7}.skill-node .node-content{min-height:78px}
+
+/* Selection overlay uses viewport coordinates, independent of canvas zoom. */
+.selection-box{position:absolute;z-index:9;pointer-events:none;border:1px solid #4262ff;background:#4262ff18;border-radius:3px}.selection-box[hidden]{display:none}
