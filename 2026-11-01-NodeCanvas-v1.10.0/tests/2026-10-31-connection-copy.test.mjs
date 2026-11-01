@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+const source=readFileSync(new URL('../web/2026-10-31-app.mjs',import.meta.url),'utf8');
+const render=source.slice(source.indexOf('function renderConnection(){'),source.indexOf('async function checkConnection(){'));
+function view(bridge){const elements=new Map();const $=id=>{if(!elements.has(id)){const classes=new Set();elements.set(id,{textContent:'',disabled:false,classList:{toggle(name,on){if(on)classes.add(name);else classes.delete(name)},contains(name){return classes.has(name)}}});}return elements.get(id);};vm.runInNewContext(render+';renderConnection();',{bridge,loginRequestBusy:false,connectorPresent:false,busy:false,updates:null,$});return $;}
+test('unconnected PC cannot begin account login and next step is explicit',()=>{const $=view({connected:false,account:null,loginPending:false});assert.equal($('login-button').disabled,true);assert.match($('account-step-description').textContent,/먼저 1번/);assert.equal($('launch-connector').classList.contains('primary'),true);});
+test('connected PC is complete while account login becomes next primary action',()=>{const $=view({connected:true,account:null,loginPending:false});assert.equal($('pc-step-status').textContent,'✓ PC 연결 완료');assert.equal($('launch-connector').classList.contains('primary'),false);assert.equal($('login-button').disabled,false);assert.match($('login-button').textContent,/로그인 시작하기/);});
+test('pending official login has secondary retry and signed-in state names completion',()=>{let $=view({connected:true,account:null,loginPending:true});assert.equal($('remember-login').disabled,true);assert.equal($('login-button').classList.contains('quiet'),true);assert.match($('account-step-description').textContent,/작업실로 돌아오세요/);$=view({connected:true,account:{type:'chatgpt'},loginPending:false});assert.equal($('login-button').disabled,true);assert.equal($('connection-label').textContent,'ChatGPT 연결됨');assert.match($('account-step-description').textContent,/완료/);});
