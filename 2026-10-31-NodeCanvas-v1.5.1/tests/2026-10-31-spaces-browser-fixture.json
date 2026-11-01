@@ -1,0 +1,26 @@
+{
+  "version": "1.0.0",
+  "name": "검증 · 이미지 노드",
+  "nodes": [
+    {
+      "id": "image-fixture",
+      "type": "image",
+      "x": 80,
+      "y": 120,
+      "data": {
+        "label": "드래그 이미지",
+        "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+      }
+    },
+    {
+      "id": "result-fixture",
+      "type": "result",
+      "x": 500,
+      "y": 120,
+      "data": {
+        "label": "연결 대상"
+      }
+    }
+  ],
+  "edges": []
+}
