@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "name": "로컬 이미지 전달 검증",
+  "nodes": [
+    { "id": "upload-test", "type": "image", "x": 80, "y": 130, "data": { "label": "업로드 확인" } },
+    { "id": "result-test", "type": "result", "x": 480, "y": 130, "data": { "label": "이미지 전달 확인" } }
+  ],
+  "edges": [{ "id": "transfer-test", "from": "upload-test", "to": "result-test" }]
+}
