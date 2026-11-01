@@ -1,4 +1,4 @@
-import {HAIRLOCK,validateNodeSkill} from './2026-11-01-skills.mjs';
+import {HAIRLOCK,validateNodeSkill,getSkill} from './2026-11-01-skills.mjs';
 export const MAX_PROJECT_BYTES=200_000_000;
 export const MAX_NODE_COUNT=150,MAX_EDGE_COUNT=500;
 const utf8=value=>new TextEncoder().encode(value).byteLength;
@@ -17,6 +17,7 @@ export function isImage(value) {
 export function outputKind(type){return TYPES[type]?.output==='text'?'prompt':TYPES[type]?.output;}
 export function canConnect(source,target,inputKind=null){
  if(!source||!target||!Object.hasOwn(TYPES,source.type)||!Object.hasOwn(TYPES,target.type)||source.id===target.id||!['generate','edit'].includes(target.type))return false;
+ if(source.type==='skill'&&getSkill(source.data?.skill)?.mode==='generate'&&target.type!=='generate')return false;
  const kind=outputKind(source.type);if(inputKind&&kind!==inputKind)return false;
  return true;
 }
@@ -77,7 +78,7 @@ export function normalizeProject(data,{allowOversized=false}={}) {
   if(graph.nodes.length>=MAX_NODE_COUNT||graph.edges.length>=MAX_EDGE_COUNT)throw new Error('기존 스킬을 노드로 변환할 공간이 없습니다. 이전 버전에서 노드나 연결을 줄인 뒤 다시 열어 주세요.');
   const unique=(base,items)=>{let id=base,count=0;while(items.some(item=>item.id===id))id=base+'-'+(++count);return id;};
   const id=unique('hairlock-'+node.id.slice(0,50),graph.nodes),edgeId=unique('skill-link-'+node.id.slice(0,50),graph.edges);
-  graph.nodes.push({id,type:'skill',x:Math.max(-100000,node.x-380),y:Math.min(100000,node.y+300),data:cleanData({type:'skill',data:{skill:HAIRLOCK.id,label:'HairLock'}})});
+  graph.nodes.push({id,type:'skill',x:Math.max(-100000,node.x-380),y:Math.min(100000,node.y+300),data:cleanData({type:'skill',data:{skill:node.data.skill,label:getSkill(node.data.skill)?.name||'스킬'}})});
   graph.edges.push({id:edgeId,from:id,to:node.id});delete node.data.skill;
  }
  validateGraph(graph,{checkSize:!allowOversized});return graph;

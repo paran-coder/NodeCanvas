@@ -1,5 +1,5 @@
 import {executionOrder,isImage} from './2026-10-31-graph.mjs';
-import {buildSkillPrompt} from './2026-11-01-skills.mjs';
+import {buildSkillPrompt,getSkill} from './2026-11-01-skills.mjs';
 export function executionPlan(graph,target){
  executionOrder(graph,target);const order=[],visited=new Set(),reused=new Set();
  function visit(id){if(visited.has(id))return;visited.add(id);const node=graph.nodes.find(n=>n.id===id);
@@ -13,5 +13,6 @@ export function requestForNode(node,inputs){
  const userPrompt=[inputs.text,node.data.text].filter(Boolean).join('\n\n');
  const prompt=buildSkillPrompt(node,userPrompt,images,skills);
  if(!prompt.trim())throw new Error('프롬프트를 연결하거나 추가 지시사항을 입력하세요.');
- return {prompt,images,kind:node.type==='edit'||skills.length?'edit':'generate',ratio:node.data.ratio||'1:1'};
+ const selected=getSkill(skills[0]);
+ return {prompt,images,kind:selected?.mode||(node.type==='edit'?'edit':'generate'),ratio:selected?.ratio||node.data.ratio||'1:1'};
 }
