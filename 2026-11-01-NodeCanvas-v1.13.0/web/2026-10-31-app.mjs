@@ -1,3 +1,5 @@
+import {ensureNodeNumbers,assignNodeNumber,nodeLabel,mergeNodeCounters} from './2026-11-01-node-numbers.mjs';
+import {readImageFile,imageGrid} from './2026-11-01-image-import.mjs';
 import {TaskQueue} from './2026-11-01-task-queue.mjs';
 import {executionPlan,requestForNode} from './2026-11-01-execution.mjs';
 import {nodeIcon,portIcon} from './2026-11-01-icons.mjs';
@@ -55,11 +57,11 @@ async function persistCurrent(){
  saveQueue=saveQueue.catch(()=>{}).then(()=>saveProject(snapshot,id,{expectedRevision:spaceRevisions.get(id)})).then(record=>{spaceRevisions.set(id,record.revision);if(id===activeSpaceId&&revision===saveRevision){dirty=false;$('save-state').dataset.state='saved';$('save-state').textContent='자동 저장됨';$('retry-save').hidden=true;}}).catch(error=>{$('save-state').dataset.state='error';$('save-state').textContent='저장 실패';$('retry-save').hidden=false;throw error;});return saveQueue;
 }
 async function leaveProject(){if(applyingUpdate)throw new Error('연결 앱 업데이트가 끝난 뒤 프로젝트를 전환하세요.');if(!transitioning){transitionRelease=await acquireWorkspace();transitioning=true;}document.querySelector('.app-header').inert=true;document.querySelector('.workspace').inert=true;clearTimeout(saveTimer);await settleEdits(()=>dirty,persistCurrent);cancelWire();closeMenus();}
-function enterProject(record){const next=normalizeProject(record.project,{allowOversized:true});projectSession++;activeSpaceId=record.id;spaceRevisions.set(record.id,record.revision);project=next;dirty=false;selected=null;selectedIds.clear();editHistory.reset(project);runStates=stateByProject.get(record.id)||{};stateByProject.set(record.id,runStates);historyRender();renderAll();readableView();$('retry-save').hidden=true;$('save-state').dataset.state='saved';$('save-state').textContent='자동 저장됨';if(projectBytes(project)>MAX_PROJECT_BYTES)notify('이전 저장본이 200MB를 넘습니다. 이미지를 개별 저장하고 노드를 줄이면 다시 저장할 수 있어요.',true);}
+function enterProject(record){const next=normalizeProject(record.project,{allowOversized:true}),numbered=ensureNodeNumbers(next);projectSession++;activeSpaceId=record.id;spaceRevisions.set(record.id,record.revision);project=next;dirty=false;selected=null;selectedIds.clear();editHistory.reset(project);runStates=stateByProject.get(record.id)||{};stateByProject.set(record.id,runStates);historyRender();renderAll();readableView();$('retry-save').hidden=true;$('save-state').dataset.state='saved';$('save-state').textContent='자동 저장됨';if(projectBytes(project)>MAX_PROJECT_BYTES)notify('이전 저장본이 200MB를 넘습니다. 이미지를 개별 저장하고 노드를 줄이면 다시 저장할 수 있어요.',true);else if(numbered)scheduleSave();}
 function releaseProject(){projectSession++;activeSpaceId=null;project={version:'1.0.0',name:'',nodes:[],edges:[]};dirty=false;selected=null;selectedIds.clear();editHistory.reset(project);runStates={};historyRender();$('image-file').value='';renderAll();}
 function updateEditControls(){$('undo-edit').disabled=applyingUpdate||taskQueue.hasProject(activeSpaceId)||!editHistory.canUndo;$('redo-edit').disabled=applyingUpdate||taskQueue.hasProject(activeSpaceId)||!editHistory.canRedo;}
 function checkpoint(group=null){editHistory.record(project,group);updateEditControls();}
-function undoEdit(redo=false){if(!projectEditable())return;const next=redo?editHistory.redo():editHistory.undo();if(!next)return;project=next;selected=null;selectedIds.clear();cancelWire();closeMenus();renderAll();scheduleSave();}
+function undoEdit(redo=false){if(!projectEditable())return;const next=redo?editHistory.redo():editHistory.undo();if(!next)return;mergeNodeCounters(next,project);project=next;selected=null;selectedIds.clear();cancelWire();closeMenus();renderAll();scheduleSave();}
 function updateView(){
   $('world').style.transform=`translate(${view.x}px,${view.y}px) scale(${view.scale})`;
   $('zoom-label').textContent=Math.round(view.scale*100)+'%';
@@ -88,7 +90,7 @@ function renderEdges(){
   $('edges').innerHTML=project.edges.map(edge=>{
     const source=project.nodes.find(n=>n.id===edge.from),target=project.nodes.find(n=>n.id===edge.to);if(!source||!target)return '';
     const d=curvePath(portPoint(source.id,'output'),portPoint(target.id,'input',outputKind(source.type)));
-    return `<g class="edge-group" data-edge="${esc(edge.id)}" style="--edge-color:${source.type==='skill'?'#a36b26':TYPES[source.type].output==='text'?'#4262ff':'#79609e'}" role="button" tabindex="0" aria-label="${esc(source.data.label||TYPES[source.type].label)}에서 ${esc(target.data.label||TYPES[target.type].label)} 연결 해제"><path class="edge-hit" d="${d}"/><path class="edge" d="${d}"/></g>`;
+    return `<g class="edge-group" data-edge="${esc(edge.id)}" style="--edge-color:${source.type==='skill'?'#a36b26':TYPES[source.type].output==='text'?'#4262ff':'#79609e'}" role="button" tabindex="0" aria-label="${esc(nodeLabel(source,TYPES[source.type].label))}에서 ${esc(nodeLabel(target,TYPES[target.type].label))} 연결 해제"><path class="edge-hit" d="${d}"/><path class="edge" d="${d}"/></g>`;
   }).join('');
 }
 function renderWire(point){
@@ -125,7 +127,7 @@ function renderNodeMarkup(n,index=0){
     if(n.type==='image')content=preview(n,'image')+(n.data.image?'<div class="node-settings"><button class="button quiet" data-action="upload">이미지 바꾸기</button><button class="button quiet" data-action="download">저장 ↗</button></div>':'');
     if(['generate','edit'].includes(n.type))content=`${preview(n,n.type==='generate'?'generate':'edit')}${skillStatus(n)}${field(n,n.type==='edit'?'편집 지시':'프롬프트',true)}<div class="node-settings"><label class="ratio-control"><span class="field-label">비율</span><select data-field="ratio" aria-label="${esc(type.label)} 이미지 비율" ${nodeLocked(n.id)||Boolean(nodeSkill(n)?.ratio)?'disabled':''} title="${nodeSkill(n)?.ratio?'선택한 스킬의 가로형 비율을 사용합니다.':'이미지 비율'}">${['1:1','3:2','2:3','16:9','9:16'].map(r=>`<option ${r===nodeRatio(n)?'selected':''}>${r}</option>`).join('')}</select></label><button class="button primary node-run" title="이 노드를 새로 실행합니다. 앞쪽에 완성된 이미지는 재사용합니다." data-run="${esc(n.id)}" ${nodeLocked(n.id)?'disabled':''}>${n.type==='edit'?'편집하기':'생성하기'} <span>↗</span></button>${n.data.image?'<button class="icon-button" data-action="download" aria-label="생성 이미지 저장">↓</button>':''}</div>`;
     const status=state?.state==='queued'?'대기 중':state?.state==='cancelling'?'취소 중':state?.state==='running'?'생성 중':state?.state==='completed'?'완료':state?.state==='reused'?'기존 결과 사용':state?.state==='failed'?'확인 필요':'';
-    return `<article class="node ${media?'media-node':n.type==='skill'?'text-node skill-node':'text-node'} ${selectedIds.has(n.id)?'selected':''} ${state?.state==='failed'?'error-node':''}" style="left:${n.x}px;top:${n.y}px;--node-tint:${tints[n.type]};--port-color:${n.type==='skill'?'#a36b26':type.output==='text'?'#4262ff':'#79609e'}" data-node="${esc(n.id)}" aria-label="${esc(type.label)} 노드"><div class="node-header" data-drag="${esc(n.id)}"><span class="node-icon" title="이 영역을 끌어 노드 이동">${nodeIcon(n.type)}</span><input class="node-label" data-field="label" aria-label="${esc(type.label)} 노드 이름" value="${esc(n.data.label||type.label)}" maxlength="80" ${nodeLocked(n.id)?'disabled':''}><button class="node-help" data-action="help" aria-label="${esc(type.label)} 사용 방법" title="${esc(type.label)} 사용 방법">?</button><span class="node-state ${esc(state?.state||'')}">${esc(status)}</span><button class="node-more" data-action="more" aria-label="${esc(type.label)} 노드 작업">⋯</button></div>${renderPorts(n)}${renderNodeTools(n)}<div class="node-content">${content}</div></article>`;
+    return `<article class="node ${media?'media-node':n.type==='skill'?'text-node skill-node':'text-node'} ${selectedIds.has(n.id)?'selected':''} ${state?.state==='failed'?'error-node':''}" style="left:${n.x}px;top:${n.y}px;--node-tint:${tints[n.type]};--port-color:${n.type==='skill'?'#a36b26':type.output==='text'?'#4262ff':'#79609e'}" data-node="${esc(n.id)}" aria-label="${esc(nodeLabel(n,type.label))} 노드"><div class="node-header" data-drag="${esc(n.id)}"><span class="node-icon" title="이 영역을 끌어 노드 이동">${nodeIcon(n.type)}</span><span class="node-name"><input class="node-label" style="width:${Math.min(230,Math.max(30,[...(n.data.label||type.label)].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))}px" data-field="label" aria-label="${esc(type.label)} 노드 이름" value="${esc(n.data.label||type.label)}" maxlength="80" ${nodeLocked(n.id)?'disabled':''}><span class="node-sequence" aria-label="노드 번호 ${n.data.sequence}">#${n.data.sequence}</span></span><button class="node-help" data-action="help" aria-label="${esc(type.label)} 사용 방법" title="${esc(type.label)} 사용 방법">?</button><span class="node-state ${esc(state?.state||'')}">${esc(status)}</span><button class="node-more" data-action="more" aria-label="${esc(type.label)} 노드 작업">⋯</button></div>${renderPorts(n)}${renderNodeTools(n)}<div class="node-content">${content}</div></article>`;
 }
 function renderNodes(){
   $('nodes').innerHTML=project.nodes.map(renderNodeMarkup).join('');
@@ -135,7 +137,7 @@ function updatePendingPorts(){
  $('world').classList.toggle('connecting',Boolean(pendingPort));
  document.querySelectorAll('.port').forEach(el=>{const port=pointerPort(el),same=pendingPort?.id===port.id&&pendingPort.direction===port.direction&&pendingPort.kind===port.kind;const pair=wirePair(pendingPort,port);const compatible=Boolean(pair&&canConnect(project.nodes.find(n=>n.id===pair.from),project.nodes.find(n=>n.id===pair.to),pair.inputKind));el.classList.toggle('pending',Boolean(same));el.classList.toggle('compatible',compatible);el.classList.toggle('incompatible',Boolean(pendingPort&&!same&&!compatible));});
 }
-function renderAll(){renderNodes();$('project-name').value=project.name;refreshBusy();}
+function renderAll(){ensureNodeNumbers(project);renderNodes();$('project-name').value=project.name;refreshBusy();}
 function changed(){checkpoint();renderAll();scheduleSave();}
 function paintSelection(){document.querySelectorAll('.node').forEach(el=>el.classList.toggle('selected',selectedIds.has(el.dataset.node)));renderEdges();}
 function select(id){selectedIds.clear();if(id)selectedIds.add(id);selected=id;paintSelection();}
@@ -145,8 +147,8 @@ function finishTemporaryPan(){spaceHeld=false;$('viewport').classList.toggle('pa
 
 function closeMenus(returnFocus=false){$('node-menu').hidden=true;$('action-menu').hidden=true;$('template-menu').hidden=true;menuContext=null;if(returnFocus)$('viewport').focus({preventScroll:true});}
 function cancelWire(){hideMarquee();pendingPort=null;drag=null;renderWire();updatePendingPorts();document.querySelectorAll('.compatible').forEach(el=>el.classList.remove('compatible'));}
-function deleteNode(id){if(!editable(id))return;const node=project.nodes.find(n=>n.id===id);if(!node||!confirm(`“${node.data.label||TYPES[node.type].label}” 노드와 연결을 삭제할까요?`))return;project.nodes=project.nodes.filter(n=>n.id!==id);project.edges=project.edges.filter(e=>e.from!==id&&e.to!==id);selected=null;selectedIds.clear();cancelWire();closeMenus();changed();}
-function duplicateNode(id){if(!editable())return;const node=project.nodes.find(n=>n.id===id);if(!node)return;if(project.nodes.length>=MAX_NODE_COUNT)return notify('노드는 150개까지 추가할 수 있습니다.',true);const copy=structuredClone(node);copy.id=uuid();copy.x+=45;copy.y+=55;project.nodes.push(copy);selected=copy.id;selectedIds.clear();selectedIds.add(copy.id);closeMenus();changed();}
+function deleteNode(id){if(!editable(id))return;const node=project.nodes.find(n=>n.id===id);if(!node||!confirm(`“${nodeLabel(node,TYPES[node.type].label)}” 노드와 연결을 삭제할까요?`))return;project.nodes=project.nodes.filter(n=>n.id!==id);project.edges=project.edges.filter(e=>e.from!==id&&e.to!==id);selected=null;selectedIds.clear();cancelWire();closeMenus();changed();}
+function duplicateNode(id){if(!editable())return;const node=project.nodes.find(n=>n.id===id);if(!node)return;if(project.nodes.length>=MAX_NODE_COUNT)return notify('노드는 150개까지 추가할 수 있습니다.',true);const copy=structuredClone(node);copy.id=uuid();copy.x+=45;copy.y+=55;try{assignNodeNumber(project,copy);}catch(error){return notify(error.message,true);}project.nodes.push(copy);selected=copy.id;selectedIds.clear();selectedIds.add(copy.id);closeMenus();changed();}
 function tryConnect(from,to,inputKind=null){
   if(!editable(from)||!editable(to))return false;
   try{project.edges.push(makeConnection(project,from,to,uuid(),inputKind));cancelWire();$('canvas-hint').textContent='연결했습니다 · 입력한 내용이 다음 노드로 전달됩니다';checkpoint();renderNodes();scheduleSave();return true;}catch(error){notify(error.message,true);return false;}
@@ -157,8 +159,8 @@ function addNode(type,skillId){
   const rect=$('viewport').getBoundingClientRect(),location=menuContext?.world||screenToWorld({x:rect.left+rect.width/2,y:rect.top+rect.height/2},rect,view);
   const node={id:uuid(),type,x:Math.round(location.x),y:Math.round(location.y),data:type==='skill'?createSkillNodeData(skillId):{text:'',ratio:'1:1',label:TYPES[type].label}};
   const origin=menuContext?.port;if(origin&&!editable(origin.id))return;const candidate={...project,nodes:[...project.nodes,node]};
-  if(origin){try{const edge=origin.direction==='output'?makeConnection(candidate,origin.id,node.id,uuid()):makeConnection(candidate,node.id,origin.id,uuid(),origin.kind);project.edges.push(edge);}catch(error){return notify(error.message,true);}}
-  project.nodes.push(node);selected=node.id;selectedIds.clear();selectedIds.add(node.id);cancelWire();closeMenus();changed();
+  let edge;if(origin){try{edge=origin.direction==='output'?makeConnection(candidate,origin.id,node.id,uuid()):makeConnection(candidate,node.id,origin.id,uuid(),origin.kind);}catch(error){return notify(error.message,true);}}
+  try{assignNodeNumber(project,node);}catch(error){return notify(error.message,true);}if(edge)project.edges.push(edge);project.nodes.push(node);selected=node.id;selectedIds.clear();selectedIds.add(node.id);cancelWire();closeMenus();changed();
   requestAnimationFrame(()=>document.querySelector(`[data-node="${node.id}"] textarea`)?.focus({preventScroll:true}));
 }
 function menuTypes(){
@@ -185,7 +187,7 @@ function downloadBlob(blob,name){const url=URL.createObjectURL(blob),a=document.
 function downloadImage(data){if(!isImage(data))return;const type=data.slice(5,data.indexOf(';')),bytes=Uint8Array.from(atob(data.split(',')[1]),c=>c.charCodeAt(0));downloadBlob(new Blob([bytes],{type}),`2026-10-31-NodeCanvas-image-v1.13.0.${type.split('/')[1]}`);}
 function exportProjectRecord(record){try{const graph=record.project||record;downloadBlob(new Blob([projectJSON(graph)],{type:'application/json'}),`2026-10-31-NodeCanvas-${graph.name.replace(/[^\w가-힣-]/g,'-').slice(0,40)}-v1.13.0.json`);notify('이미지를 포함한 프로젝트 JSON 백업을 다운로드합니다.');return true;}catch(error){notify(error.message,true);return false;}}
 function exportProject(){return exportProjectRecord(project);}
-function replaceProject(next){if(!projectEditable())return;if(!confirm('현재 워크플로를 교체할까요? 필요한 내용은 먼저 저장으로 백업하세요.'))return;project=next;selected=next.nodes[0]?.id||null;selectedIds.clear();if(selected)selectedIds.add(selected);cancelWire();closeMenus();Object.keys(runStates).forEach(k=>delete runStates[k]);history.length=0;historyRender();changed();readableView();}
+function replaceProject(next){if(!projectEditable())return;if(!confirm('현재 워크플로를 교체할까요? 필요한 내용은 먼저 저장으로 백업하세요.'))return;mergeNodeCounters(next,project);project=next;selected=next.nodes[0]?.id||null;selectedIds.clear();if(selected)selectedIds.add(selected);cancelWire();closeMenus();Object.keys(runStates).forEach(k=>delete runStates[k]);history.length=0;historyRender();changed();readableView();}
 
 async function api(route,input={},anonymous=false,timeout=42000) {
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeout);
@@ -273,7 +275,7 @@ function pause(ms,signal){return new Promise(resolve=>{if(signal.aborted)return 
 async function cancelProviderTask(task){if(task.providerJob)await(task.cancelPromise||=api('cancel',{id:task.providerJob}));}
 async function storeTaskImage(task,node,image){
  task.unsavedImage=image;const release=await acquireWorkspace();try{
- const sameData=n=>n&&n.type===node.type&&JSON.stringify(n.data)===JSON.stringify(node.data);
+ const sameData=n=>n&&n.type===node.type&&['sequence','skill','text','image','ratio','label'].every(key=>(n.data[key]??'')===(node.data[key]??''));
  if(activeSpaceId===task.projectId){const real=project.nodes.find(n=>n.id===node.id);if(!sameData(real))throw new Error('노드 내용이 변경되어 결과를 덮어쓰지 않았습니다. 미저장 이미지 저장을 눌러 보관하세요.');real.data.image=image;checkpoint('generation:'+task.id);scheduleSave();await persistCurrent();}
  else{let saved=false;for(let attempt=0;attempt<3;attempt++){const record=await getSpace(task.projectId);if(!record||record.trashed)throw new Error('원래 프로젝트를 열 수 없습니다. 미저장 이미지를 저장하세요.');const real=record.project.nodes.find(n=>n.id===node.id);if(!sameData(real))throw new Error('다른 탭에서 노드가 변경되어 덮어쓰지 않았습니다. 미저장 이미지를 저장하세요.');real.data.image=image;try{const next=await saveProject(record.project,task.projectId,{expectedRevision:record.revision});spaceRevisions.set(task.projectId,next.revision);saved=true;break;}catch(error){if(error.code!=='CONFLICT'||attempt===2)throw error;}}if(!saved)throw new Error('이미지 결과를 저장하지 못했습니다.');}
  task.unsavedImage=null;
@@ -282,7 +284,7 @@ async function storeTaskImage(task,node,image){
 async function runWorkflow(target){
  if(applyingUpdate||!activeSpaceId)return;const originId=activeSpaceId,originSession=projectSession;try{await persistCurrent();if(activeSpaceId!==originId||projectSession!==originSession)return notify('프로젝트가 바뀌어 실행 요청을 등록하지 않았습니다.');const snapshot=structuredClone(project),{order,reused}=executionPlan(snapshot,target);if(!order.length)return notify('노드를 먼저 추가하세요.');const writeIds=order.filter(id=>!reused.has(id)&&['generate','edit'].includes(snapshot.nodes.find(n=>n.id===id).type));
  if(writeIds.length&&(!bridge.connected||!bridge.account)){$('connect-dialog').showModal();return connectionMessage('PC 페어링과 ChatGPT 로그인을 먼저 완료하세요.');}
- const task=taskQueue.add({id:uuid(),projectId:activeSpaceId,projectName:project.name,label:target?(snapshot.nodes.find(n=>n.id===target)?.data.label||'선택 생성'):'전체 워크플로',snapshot,order,reused,nodeIds:order,writeIds});notify(taskQueue.active?'생성 대기열에 등록했습니다. 다른 작업을 준비할 수 있어요.':'작업을 등록했습니다.');
+ const task=taskQueue.add({id:uuid(),projectId:activeSpaceId,projectName:project.name,label:target?nodeLabel(snapshot.nodes.find(n=>n.id===target),'선택 생성'):'전체 워크플로',snapshot,order,reused,nodeIds:order,writeIds});notify(taskQueue.active?'생성 대기열에 등록했습니다. 다른 작업을 준비할 수 있어요.':'작업을 등록했습니다.');
  }catch(error){notify(error.message,true);}
 }
 async function executeTask(task,signal){
@@ -376,7 +378,7 @@ $('viewport').addEventListener('pointercancel',()=>{if(drag?.kind==='node'&&drag
 $('nodes').addEventListener('input',event=>{
   const input=event.target.closest('[data-field]');if(!input)return;
   const node=project.nodes.find(n=>n.id===input.closest('[data-node]')?.dataset.node);if(!node||nodeLocked(node.id))return;
-  node.data[input.dataset.field]=input.value;delete runStates[node.id];
+  node.data[input.dataset.field]=input.value;if(input.dataset.field==='label')input.style.width=Math.min(230,Math.max(30,[...input.value].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))+'px';delete runStates[node.id];
   const count=input.closest('.node').querySelector('[data-char-count]');if(count)count.textContent=(node.data.text||'').length+'자';
   refreshPromptGuidance();
   checkpoint('field:'+node.id+':'+input.dataset.field);scheduleSave();
@@ -442,12 +444,34 @@ $('project-name').oninput=event=>{if(!editable()){event.target.value=project.nam
 $('export-project').onclick=exportProject;
 $('open-project').onclick=()=>{if(editable()){$('project-file').value='';$('project-file').click();}};
 $('project-file').onchange=async event=>{const file=event.target.files[0];if(!file)return;try{if(file.size>MAX_PROJECT_BYTES)throw new Error('프로젝트 JSON은 200MB까지 열 수 있습니다.');await library.importProject(restoreProject(await file.text()));}catch(error){notify(error.message,true);}};
-$('image-file').onchange=async event=>{
-  const file=event.target.files[0],id=uploadTarget,ticket={projectId:activeSpaceId,session:projectSession,nodeId:uploadTarget};if(!file||!editable())return;
-  if(file.size>8_000_000)return notify('이미지는 8MB 이하로 불러오세요.',true);
-  if(!['image/png','image/jpeg','image/webp'].includes(file.type))return notify('PNG/JPG/WebP 이미지만 사용할 수 있습니다.',true);
-  try{const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('이미지 읽기 실패'));reader.readAsDataURL(file);});const bitmap=await createImageBitmap(file);bitmap.close();if(!uploadApplies(ticket,{projectId:activeSpaceId,session:projectSession,project}))return notify('프로젝트가 바뀌어 이미지 적용을 중단했습니다. 필요한 프로젝트에서 다시 선택해 주세요.');const node=project.nodes.find(n=>n.id===id);if(!node||!editable(id))return;node.data.image=data;select(id);changed();notify('이미지를 불러왔습니다.');}catch{notify('이미지를 읽지 못했습니다. 실제 이미지 파일인지 확인하세요.',true);}
-};
+let imageImportBusy=false;
+async function importImageFiles(files,{targetId=null,point={x:100,y:100}}={}){
+ if(!activeSpaceId||document.body.classList.contains('show-library'))return notify('프로젝트를 연 뒤 캔버스에 이미지 파일을 놓으세요.');
+ if(imageImportBusy)return notify('이미지를 불러오는 중입니다. 잠시 기다려 주세요.');if(!files.length)return;
+ if(targetId&&files.length!==1)return notify('이미지 교체는 한 장만 놓으세요. 여러 이미지는 빈 캔버스에 놓으세요.',true);
+ if(targetId&&!editable(targetId))return;
+ if(!targetId&&project.nodes.length+files.length>MAX_NODE_COUNT)return notify('노드는 프로젝트당 150개까지 추가할 수 있습니다.',true);
+ if(files.some(file=>file.size>8_000_000))return notify('이미지는 파일당 8MB 이하로 불러오세요.',true);
+ if(!targetId&&projectBytes(project)+files.reduce((sum,file)=>sum+Math.ceil(file.size/3)*4+500,0)>MAX_PROJECT_BYTES)return notify('이미지를 추가하면 프로젝트의 200MB 한도를 넘습니다. 이미지 수나 용량을 줄여 주세요.',true);
+ const ticket={id:activeSpaceId,session:projectSession};imageImportBusy=true;$('viewport').setAttribute('aria-busy','true');
+ try{const items=[];for(const file of files)items.push(await readImageFile(file));
+ if(activeSpaceId!==ticket.id||projectSession!==ticket.session)return notify('프로젝트가 바뀌어 이미지 추가를 중단했습니다. 현재 프로젝트에 다시 놓으세요.');
+ if(targetId&&!editable(targetId))return;
+ const candidate={...project,nodeCounters:{...project.nodeCounters},nodes:project.nodes.map(n=>({...n,data:{...n.data}})),edges:project.edges.map(e=>({...e}))},added=[];
+ if(targetId){const node=candidate.nodes.find(n=>n.id===targetId&&n.type==='image');if(!node)return notify('이미지 업로드 노드에만 교체할 수 있습니다.',true);node.data.image=items[0].image;node.data.label=items[0].label;added.push(node.id);}
+ else{const positions=imageGrid(items,point,NODE_WIDTH);for(let i=0;i<items.length;i++){const node={id:uuid(),type:'image',...positions[i],data:{image:items[i].image,label:items[i].label,text:'',ratio:'1:1'}};assignNodeNumber(candidate,node);candidate.nodes.push(node);added.push(node.id);}}
+ project=normalizeProject(candidate);ensureNodeNumbers(project);suppressClickUntil=0;selectedIds.clear();added.forEach(id=>selectedIds.add(id));selected=added.at(-1)||null;changed();notify(targetId?'이미지를 바꿨습니다. 노드 번호와 연결은 유지됩니다.':`${items.length}개 이미지 노드를 추가했습니다. 원본 해상도는 유지됩니다.`);
+ }catch(error){notify(error.message,true);}finally{imageImportBusy=false;$('viewport').removeAttribute('aria-busy');}
+}
+$('image-file').onchange=event=>{const file=event.target.files[0];if(file)void importImageFiles([file],{targetId:uploadTarget});};
+const fileDrag=event=>Array.from(event.dataTransfer?.types||[]).includes('Files');
+function clearDropHint(){$('viewport').classList.remove('file-drop-active');document.querySelectorAll('.image-drop-target').forEach(el=>el.classList.remove('image-drop-target'));}
+window.addEventListener('dragover',event=>{if(fileDrag(event))event.preventDefault();});
+window.addEventListener('drop',event=>{if(fileDrag(event)){event.preventDefault();clearDropHint();if(!event.target.closest('#viewport'))notify('프로젝트의 캔버스 안에 이미지 파일을 놓으세요.');}});
+$('viewport').addEventListener('dragover',event=>{if(!fileDrag(event))return;event.preventDefault();event.dataTransfer.dropEffect='copy';clearDropHint();$('viewport').classList.add('file-drop-active');const el=event.target.closest('[data-node]');if(project.nodes.find(n=>n.id===el?.dataset.node)?.type==='image')el.classList.add('image-drop-target');});
+$('viewport').addEventListener('dragleave',event=>{if(!event.relatedTarget||!$('viewport').contains(event.relatedTarget))clearDropHint();});
+$('viewport').addEventListener('drop',event=>{if(!fileDrag(event))return;event.preventDefault();clearDropHint();const el=event.target.closest('[data-node]'),node=project.nodes.find(n=>n.id===el?.dataset.node);if(node&&node.type!=='image')return notify('빈 캔버스 또는 이미지 업로드 노드에 놓으세요. 생성·편집 결과는 교체하지 않습니다.');const point=screenToWorld({x:event.clientX,y:event.clientY},$('viewport').getBoundingClientRect(),view);void importImageFiles(Array.from(event.dataTransfer.files),{targetId:node?.id,point});});
+window.addEventListener('blur',clearDropHint);window.addEventListener('dragend',clearDropHint);
 $('template-basic').onclick=()=>replaceProject(starterProject());
 $('template-edit').onclick=()=>replaceProject(editProject());
 $('help-open').onclick=()=>$('help-dialog').showModal();
@@ -475,7 +499,7 @@ document.addEventListener('keydown',event=>{
   if(isImeKey(event))return;
   if(document.body.classList.contains('show-library'))return;
   if((event.ctrlKey||event.metaKey)&&['z','y'].includes(event.key.toLowerCase())&&!event.target.closest('input,textarea,select')&&!document.querySelector('dialog[open]')){event.preventDefault();undoEdit(event.shiftKey||event.key.toLowerCase()==='y');return;}
-  if(event.key==='Escape'){select(null);cancelWire();closeMenus();finishTemporaryPan();$('canvas-hint').textContent='드래그로 다중 선택 · Ctrl+클릭으로 추가 선택 · Space+드래그로 화면 이동';return;}
+  if(event.key==='Escape'){clearDropHint();select(null);cancelWire();closeMenus();finishTemporaryPan();$('canvas-hint').textContent='드래그로 다중 선택 · Ctrl+클릭으로 추가 선택 · Space+드래그로 화면 이동';return;}
   if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();exportProject();}
   if(['INPUT','TEXTAREA','SELECT'].includes(event.target.tagName)||document.querySelector('dialog[open]'))return;
   if(event.key.toLowerCase()==='v')setTool('select');

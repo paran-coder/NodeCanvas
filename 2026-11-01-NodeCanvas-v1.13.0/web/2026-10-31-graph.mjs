@@ -1,9 +1,10 @@
+import {cleanNodeCounters} from './2026-11-01-node-numbers.mjs';
 import {HAIRLOCK,validateNodeSkill,getSkill} from './2026-11-01-skills.mjs';
 export const MAX_PROJECT_BYTES=200_000_000;
 export const MAX_NODE_COUNT=150,MAX_EDGE_COUNT=500;
 const utf8=value=>new TextEncoder().encode(value).byteLength;
-function cleanData(n){return {...(n.data.skill?{skill:n.data.skill}:{}),text:n.data.text||'',image:n.data.image||'',ratio:['1:1','3:2','2:3','16:9','9:16'].includes(n.data.ratio)?n.data.ratio:'1:1',label:String(n.type==='image'&&['참조 이미지','업로드하기'].includes(n.data.label)?'이미지 업로드':n.data.label||'').slice(0,80)};}
-export function projectBytes(graph){let images=0;const nodes=graph.nodes.map(n=>{const data=cleanData(n);images+=data.image.length;data.image='';return {id:n.id,type:n.type,x:n.x,y:n.y,data};});return utf8(JSON.stringify({version:'1.0.0',name:String(graph.name||'이름 없는 워크플로').slice(0,80),nodes,edges:graph.edges.map(e=>({id:e.id,from:e.from,to:e.to}))}))+images;}
+function cleanData(n){return {...(n.data.sequence!==undefined?{sequence:n.data.sequence}:{}),...(n.data.skill?{skill:n.data.skill}:{}),text:n.data.text||'',image:n.data.image||'',ratio:['1:1','3:2','2:3','16:9','9:16'].includes(n.data.ratio)?n.data.ratio:'1:1',label:String(n.type==='image'&&['참조 이미지','업로드하기'].includes(n.data.label)?'이미지 업로드':n.data.label||'').slice(0,80)};}
+export function projectBytes(graph){let images=0;const nodes=graph.nodes.map(n=>{const data=cleanData(n);images+=data.image.length;data.image='';return {id:n.id,type:n.type,x:n.x,y:n.y,data};});return utf8(JSON.stringify({version:'1.0.0',name:String(graph.name||'이름 없는 워크플로').slice(0,80),...(graph.nodeCounters?{nodeCounters:cleanNodeCounters(graph.nodeCounters)}:{}),nodes,edges:graph.edges.map(e=>({id:e.id,from:e.from,to:e.to}))}))+images;}
 export const TYPES = {
   skill: {label:'스킬',icon:'🧩',color:'#f4d4a0',output:'skill'},
   prompt: { label:'프롬프트', icon:'T', color:'#c5dd83', output:'text' },
@@ -24,12 +25,14 @@ export function canConnect(source,target,inputKind=null){
 export function validateGraph(graph,{checkSize=true}={}) {
   if(!graph || graph.version!=='1.0.0' || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw new Error('지원하지 않는 프로젝트 형식입니다.');
   if(graph.nodes.length>MAX_NODE_COUNT || graph.edges.length>MAX_EDGE_COUNT) throw new Error('노드는 150개, 연결은 500개까지 지원합니다.');
+  if(graph.nodeCounters!==undefined)cleanNodeCounters(graph.nodeCounters);
   const nodes=new Map();
   for(const n of graph.nodes) {
     if(n?.type==='result')throw new Error('이 버전은 결과 노드를 지원하지 않습니다. 생성·편집 카드에서 이미지를 확인하고 저장하세요.');
     if(!n || typeof n.id!=='string' || !/^[\w-]{1,80}$/.test(n.id) || nodes.has(n.id) || !Object.hasOwn(TYPES,n.type)) throw new Error('잘못되거나 중복된 노드입니다.');
     if(!Number.isFinite(n.x) || !Number.isFinite(n.y) || Math.abs(n.x)>100000 || Math.abs(n.y)>100000) throw new Error('노드 위치가 올바르지 않습니다.');
     if(!n.data || typeof n.data!=='object' || Array.isArray(n.data)) throw new Error('노드 내용이 올바르지 않습니다.');
+    if(n.data.sequence!==undefined&&(!Number.isSafeInteger(n.data.sequence)||n.data.sequence<1||n.data.sequence>1_000_000_000))throw new Error('노드 번호가 올바르지 않습니다.');
     validateNodeSkill(n);
     if(n.data.text!==undefined && (typeof n.data.text!=='string' || n.data.text.length>16000)) throw new Error('프롬프트는 16,000자까지 입력할 수 있습니다.');
     if(n.data.image && !isImage(n.data.image)) throw new Error('이미지는 PNG/JPEG/WebP 파일만 사용할 수 있습니다.');
@@ -73,7 +76,7 @@ export function collectInputs(graph, id, outputs) {
 }
 export function normalizeProject(data,{allowOversized=false}={}) {
  validateGraph(data,{checkSize:!allowOversized});
- const graph={version:'1.0.0',name:String(data.name||'이름 없는 워크플로').slice(0,80),nodes:data.nodes.map(n=>({id:n.id,type:n.type,x:n.x,y:n.y,data:cleanData(n)})),edges:data.edges.map(e=>({id:e.id,from:e.from,to:e.to}))};
+ const graph={version:'1.0.0',name:String(data.name||'이름 없는 워크플로').slice(0,80),...(data.nodeCounters?{nodeCounters:cleanNodeCounters(data.nodeCounters)}:{}),nodes:data.nodes.map(n=>({id:n.id,type:n.type,x:n.x,y:n.y,data:cleanData(n)})),edges:data.edges.map(e=>({id:e.id,from:e.from,to:e.to}))};
  for(const node of [...graph.nodes])if(node.type==='edit'&&node.data.skill){
   if(graph.nodes.length>=MAX_NODE_COUNT||graph.edges.length>=MAX_EDGE_COUNT)throw new Error('기존 스킬을 노드로 변환할 공간이 없습니다. 이전 버전에서 노드나 연결을 줄인 뒤 다시 열어 주세요.');
   const unique=(base,items)=>{let id=base,count=0;while(items.some(item=>item.id===id))id=base+'-'+(++count);return id;};

@@ -1,3 +1,4 @@
+import {nodeLabel} from './2026-11-01-node-numbers.mjs';
 import {getSkill} from './2026-11-01-skills.mjs';
 import {initializeSpaces,listSpaces,getSpace,addSpace,changeSpace,duplicateSpace,purgeSpace,storageEstimate} from './2026-10-31-storage.mjs';
 import {storageSummary} from './2026-11-01-usage.mjs';
@@ -10,7 +11,7 @@ function thumbnail(project){
  const nodes=project.nodes,minX=Math.min(...nodes.map(n=>n.x))-50,minY=Math.min(...nodes.map(n=>n.y))-65,maxX=Math.max(...nodes.map(n=>n.x+320))+50,maxY=Math.max(...nodes.map(n=>n.y+300))+50;
  const byId=new Map(nodes.map(n=>[n.id,n]));
  let content=project.edges.map(e=>{const a=byId.get(e.from),b=byId.get(e.to);if(!a||!b)return '';const x=a.x+320,y=a.y+100,xx=b.x,yy=b.y+100;return `<path d="M${x} ${y} C${x+90} ${y} ${xx-90} ${yy} ${xx} ${yy}" fill="none" stroke="#8298df" stroke-width="3"/>`;}).join('');
- for(const n of project.nodes){content+=`<g transform="translate(${n.x},${n.y})"><rect width="320" height="300" rx="12" fill="white" stroke="#d3d8e2" stroke-width="2"/><rect width="320" height="28" rx="12" fill="${colors[n.type]}"/><text x="14" y="20" fill="#343946" font-size="14">${esc((n.data.label||n.type).slice(0,28))}</text>`;
+ for(const n of project.nodes){content+=`<g transform="translate(${n.x},${n.y})"><rect width="320" height="300" rx="12" fill="white" stroke="#d3d8e2" stroke-width="2"/><rect width="320" height="28" rx="12" fill="${colors[n.type]}"/><text x="14" y="20" fill="#343946" font-size="14">${esc(nodeLabel(n,n.type).slice(0,32))}</text>`;
  if(isImage(n.data.image))content+=`<image href="${esc(n.data.image)}" x="8" y="36" width="304" height="256" preserveAspectRatio="xMidYMid meet"/>`;
  else if(n.type==='skill')content+=`<text x="20" y="80" fill="#81541c" font-size="18">${esc(getSkill(n.data.skill)?.name||'스킬')} · 스킬</text>`;
  else if(n.type==='prompt')content+=`<text x="18" y="68" fill="#707786" font-size="16">${esc((n.data.text||'프롬프트를 입력하세요').slice(0,22))}</text>`;
