@@ -1,0 +1,16 @@
+import {readFile,writeFile} from 'node:fs/promises';
+import {createHash,sign} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+import path from 'node:path';
+import {UPDATE_PUBLIC_KEY} from './connector/2026-11-01-update-key.mjs';
+import {verifyRelease} from './connector/2026-11-01-updates.mjs';
+const root=path.dirname(fileURLToPath(import.meta.url));
+const current='1.13.0';
+const keyPath=process.argv[2]||path.resolve(root,'../.runtime/2026-11-01-update-signing/private.pem');
+const bytes=await readFile(path.join(root,`web/2026-10-31-NodeCanvas-Setup-v${current}.exe`));
+const release={schema:1,version:current,url:`https://nodenanvas.vercel.app/2026-10-31-NodeCanvas-Setup-v${current}.exe`,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};
+const payload=Buffer.from(JSON.stringify(release)).toString('base64');
+const signature=sign('sha256',Buffer.from(payload),await readFile(keyPath)).toString('base64');
+const envelope={payload,signature};verifyRelease(envelope,UPDATE_PUBLIC_KEY,'0.0.0');
+await writeFile(path.join(root,'web/2026-11-01-update.json'),JSON.stringify(envelope,null,2));
+console.log(`Signed release ${current}; private key was not included.`);
