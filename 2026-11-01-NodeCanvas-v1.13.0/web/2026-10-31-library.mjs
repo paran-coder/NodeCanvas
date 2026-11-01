@@ -18,7 +18,7 @@ function thumbnail(project){
  content+='</g>';}
  return `<svg viewBox="${minX} ${minY} ${maxX-minX} ${maxY-minY}" aria-hidden="true">${content}</svg>`;
 }
-export async function initializeLibrary({beforeLeave,afterTransition,openProject,onLibrary,backupProject,notify}){
+export async function initializeLibrary({beforeLeave,afterTransition,openProject,onLibrary,backupProject,notify,canRemoveProject=()=>true}){
  let records=[],trash=false,query='',locked=false,nameTarget=null,trashTarget=null,purgeTarget=null,refreshNumber=0;
  const date=new Intl.DateTimeFormat('ko-KR',{month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'});
  function render(){
@@ -32,7 +32,7 @@ export async function initializeLibrary({beforeLeave,afterTransition,openProject
  async function refresh(){const sequence=++refreshNumber;const latest=await listSpaces();if(sequence===refreshNumber){records=latest;render();void showUsage();}}
  async function showUsage(){const value=await storageEstimate();$('storage-usage').textContent=storageSummary(value);}
  async function action(fn){if(locked)return;locked=true;render();try{await fn();}catch(error){notify(error.message,true);}finally{locked=false;afterTransition();await refresh().catch(e=>notify(e.message,true));}}
- async function enter(record){if(!record||record.trashed)throw new Error('열 수 없는 프로젝트입니다.');await beforeLeave();await openProject(record);document.body.classList.remove('show-library');$('project-name').focus();}
+ async function enter(record){if(!record||record.trashed)throw new Error('열 수 없는 프로젝트입니다.');await beforeLeave();await openProject(await getSpace(record.id));document.body.classList.remove('show-library');$('project-name').focus();}
  async function show(){return action(async()=>{await beforeLeave();await refresh();document.body.classList.add('show-library');onLibrary();$('new-space').focus();});}
  async function create(next){await beforeLeave();const record=await addSpace(next);await enter(record);}
  $('new-space').onclick=$('empty-new-space').onclick=()=>action(()=>create({...starterProject(),name:'새 프로젝트',nodes:[],edges:[]}));
@@ -41,9 +41,9 @@ export async function initializeLibrary({beforeLeave,afterTransition,openProject
  $('purge-confirm-text').oninput=()=>{$('purge-confirm').disabled=$('purge-confirm-text').value!=='삭제'||locked;};
  $('purge-cancel').onclick=()=>{if(!locked){purgeTarget=null;$('purge-dialog').close();}};
  $('purge-dialog').addEventListener('cancel',event=>{if(locked)event.preventDefault();else purgeTarget=null;});
- $('purge-confirm').onclick=async()=>{if(locked||!purgeTarget||$('purge-confirm-text').value!=='삭제')return;locked=true;$('purge-confirm').disabled=$('purge-cancel').disabled=true;try{await beforeLeave();await purgeSpace(purgeTarget);purgeTarget=null;$('purge-dialog').close();notify('프로젝트와 연결된 저장 자료를 영구 삭제했습니다.');await refresh();}catch(error){$('purge-error').textContent=error.message;}finally{locked=false;afterTransition();$('purge-cancel').disabled=false;$('purge-confirm').disabled=$('purge-confirm-text').value!=='삭제';render();}};
+ $('purge-confirm').onclick=async()=>{if(locked||!purgeTarget||$('purge-confirm-text').value!=='삭제')return;locked=true;$('purge-confirm').disabled=$('purge-cancel').disabled=true;try{await beforeLeave();if(!canRemoveProject(purgeTarget))throw new Error('이 프로젝트의 작업을 완료하거나 취소한 뒤 삭제하세요.');await purgeSpace(purgeTarget);purgeTarget=null;$('purge-dialog').close();notify('프로젝트와 연결된 저장 자료를 영구 삭제했습니다.');await refresh();}catch(error){$('purge-error').textContent=error.message;}finally{locked=false;afterTransition();$('purge-cancel').disabled=false;$('purge-confirm').disabled=$('purge-confirm-text').value!=='삭제';render();}};
  $('trash-cancel').onclick=()=>{if(!locked){trashTarget=null;$('trash-dialog').close();}};
- $('trash-confirm').onclick=async()=>{if(locked||!trashTarget)return;locked=true;$('trash-confirm').disabled=$('trash-cancel').disabled=true;try{await beforeLeave();await changeSpace(trashTarget,{trashed:true});trashTarget=null;$('trash-dialog').close();notify('휴지통으로 옮겼습니다. 언제든 복원할 수 있어요.');await refresh();}catch(error){$('trash-error').textContent=error.message;}finally{locked=false;afterTransition();$('trash-confirm').disabled=$('trash-cancel').disabled=false;render();}};
+ $('trash-confirm').onclick=async()=>{if(locked||!trashTarget)return;locked=true;$('trash-confirm').disabled=$('trash-cancel').disabled=true;try{await beforeLeave();if(!canRemoveProject(trashTarget))throw new Error('이 프로젝트의 작업을 완료하거나 취소한 뒤 휴지통으로 옮기세요.');await changeSpace(trashTarget,{trashed:true});trashTarget=null;$('trash-dialog').close();notify('휴지통으로 옮겼습니다. 언제든 복원할 수 있어요.');await refresh();}catch(error){$('trash-error').textContent=error.message;}finally{locked=false;afterTransition();$('trash-confirm').disabled=$('trash-cancel').disabled=false;render();}};
  $('trash-dialog').addEventListener('cancel',event=>{if(locked)event.preventDefault();else trashTarget=null;});
  $('space-name-close').onclick=$('space-name-cancel').onclick=()=>$('space-name-dialog').close();
  $('space-name-form').onsubmit=async event=>{event.preventDefault();if(locked)return;const name=$('space-name-input').value.trim();if(!name){$('space-name-error').textContent='프로젝트 이름을 입력해 주세요.';return;}locked=true;$('space-name-save').disabled=true;try{await beforeLeave();await changeSpace(nameTarget,{name});$('space-name-dialog').close();await refresh();}catch(error){$('space-name-error').textContent=error.message;}finally{locked=false;afterTransition();$('space-name-save').disabled=false;render();}};
