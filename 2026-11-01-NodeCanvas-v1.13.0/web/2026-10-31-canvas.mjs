@@ -17,6 +17,7 @@ export function uploadClick(finished){return finished?.kind==='node'&&finished.u
 export function portOffset(type,direction,kind){if(type==='skill')return 39;if(direction==='input'&&['generate','edit'].includes(type))return kind==='prompt'?110:kind==='skill'?190:150;return PORT_Y;}
 export function portsFor(type){
  if(!Object.hasOwn(TYPES,type))return [];
+ if(type==='color')return [{direction:'input',kind:'image',label:'편집 이미지',description:'이미지 편집기의 출력을 연결하세요.'}];
  const input=['generate','edit'].includes(type)?[
  {direction:'input',kind:'prompt',icon:'T',label:'프롬프트',description:'텍스트 연결은 선택 사항입니다. 카드 안에 직접 입력해도 됩니다.'},
  {direction:'input',kind:'image',icon:'▧',label:'참조 이미지',description:type==='edit'?'편집할 이미지를 연결하세요. 최소 한 장 필요합니다.':'참고할 이미지를 연결하세요. HairLock을 사용할 때는 원본 이미지가 필수입니다.'}
