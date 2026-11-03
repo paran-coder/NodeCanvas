@@ -1,3 +1,4 @@
+import {bindMentionPrompt,moveMentions} from './2026-11-03-image-mentions.mjs';
 import {colorSettings} from './2026-11-03-color.mjs';
 import {renderColorPanel, loadColorPanel, refreshColorPanel, colorPng} from './2026-11-03-color-panel.mjs';
 import {ensureNodeNumbers,assignNodeNumber,nodeLabel,mergeNodeCounters} from './2026-11-01-node-numbers.mjs';
@@ -316,7 +317,7 @@ async function executeTask(task,signal){
  else if(node.type==='skill')outputs[id]={skills:[node.data.skill]};
  else if(node.type==='image'){if(!isImage(node.data.image))throw new Error('참조 이미지 노드에 이미지를 불러오세요.');outputs[id]={text:'',images:[node.data.image]};}
  else{
- nodeState(task,id,{state:'running',phase:'요청 준비 중',startedAt:Date.now()});task.phase='요청 준비 중';renderTasks();const request=requestForNode(node,inputs),deadline=Date.now()+600000;let response;
+ nodeState(task,id,{state:'running',phase:'요청 준비 중',startedAt:Date.now()});task.phase='요청 준비 중';renderTasks();const request=bindMentionPrompt(requestForNode(node,inputs),node,snapshot,outputs),deadline=Date.now()+600000;let response;
  while(!response){throwCancelled(signal);try{response=await api('jobs',request);}catch(error){if(error.status!==409||Date.now()>deadline)throw error;task.phase='연결 앱의 다른 작업 완료 대기';nodeState(task,id,{phase:task.phase});renderTasks();await pause(2500,signal);}}
  task.providerJob=response.id;task.cancelPromise=null;throwCancelled(signal);
  while(true){throwCancelled(signal);const job=await api('job',{id:task.providerJob});throwCancelled(signal);if(job.timings)task.timings[id]=job.timings;task.phase=job.images?.length?'이미지 수신 · 마무리 중':job.timings?.some(t=>t.stage==='generating')?'이미지 생성 중':'AI 응답 대기 중';nodeState(task,id,{phase:task.phase,...(job.images?.[0]?{previewImage:job.images[0]}:{})});renderTasks();
@@ -395,6 +396,76 @@ $('viewport').addEventListener('pointerup',event=>{
   resetHighlight();
 });
 $('viewport').addEventListener('pointercancel',()=>{if(drag?.kind==='node'&&drag.moved){checkpoint();scheduleSave();}cancelWire();});
+let mentionMenu=null;
+function closeMentionMenu(){
+  mentionMenu?.element.remove();
+  mentionMenu=null;
+}
+function showMentionMenu(input){
+  closeMentionMenu();
+  const node=project.nodes.find(node=>node.id===input.closest('[data-node]')?.dataset.node);
+  if(!node||!['generate','edit'].includes(node.type)||input.selectionStart!==input.selectionEnd)return;
+  const caret=input.selectionStart;
+  const match=/(?:^|\s)@([^@\n]{0,80})$/.exec(input.value.slice(0,caret));
+  if(!match)return;
+  const start=caret-match[1].length-1;
+  if(node.data.mentions?.some(item=>item.start===start&&input.value.slice(start,caret)===item.token))return;
+  const candidates=project.edges.filter(edge=>edge.to===node.id)
+    .map(edge=>project.nodes.find(source=>source.id===edge.from))
+    .filter(source=>source&&isImage(source.data.image));
+  const element=document.createElement('div');
+  element.setAttribute('role','group');
+  element.setAttribute('aria-label','연결된 참조 이미지');
+  Object.assign(element.style,{position:'fixed',zIndex:20,background:'white',border:'1px solid #d3d4d9',
+    borderRadius:'10px',padding:'6px',maxHeight:'240px',overflow:'auto',boxShadow:'0 4px 16px #0002'});
+  const rect=input.getBoundingClientRect();
+  element.style.left=Math.max(8,Math.min(rect.left,innerWidth-248))+'px';
+  element.style.width='240px';
+  element.style.top=Math.max(8,Math.min(rect.bottom+4,innerHeight-248))+'px';
+  for(const source of candidates){
+    const title=source.data.label||TYPES[source.type].label;
+    if(!title.toLowerCase().includes(match[1].toLowerCase()))continue;
+    const button=document.createElement('button');
+    button.type='button';
+    Object.assign(button.style,{display:'flex',alignItems:'center',gap:'8px',width:'100%',padding:'5px',textAlign:'left'});
+    const thumb=new Image(36,28);
+    thumb.src=source.data.image;thumb.alt='';thumb.style.objectFit='cover';
+    button.append(thumb,document.createTextNode(title+' #'+source.data.sequence));
+    button.addEventListener('click',()=>{
+      if(!input.isConnected||nodeLocked(node.id)){closeMentionMenu();return;}
+      const token='@'+title;
+      const before=input.value;
+      input.setRangeText(token+' ',start,caret,'end');
+      node.data.mentions=[...moveMentions(node.data.mentions,before,input.value),{start,token,sourceId:source.id}].sort((a,b)=>a.start-b.start);
+      input.dataset.mentionCommit='true';
+      closeMentionMenu();
+      input.focus();
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+    });
+    element.append(button);
+  }
+  if(!element.childElementCount)return;
+  document.body.append(element);
+  mentionMenu={element,input};
+}
+document.addEventListener('pointerdown',event=>{
+  if(mentionMenu&&!mentionMenu.element.contains(event.target)&&event.target!==mentionMenu.input)closeMentionMenu();
+});
+document.addEventListener('keydown',event=>{
+  if(!mentionMenu||event.isComposing)return;
+  const {element,input}=mentionMenu;
+  const buttons=[...element.querySelectorAll('button')],index=buttons.indexOf(event.target);
+  if(event.target!==input&&index<0)return;
+  if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeMentionMenu();input.focus();}
+  if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+    event.preventDefault();event.stopPropagation();
+    const next=index<0?(event.key==='ArrowDown'?0:buttons.length-1):(index+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length;
+    buttons[next].focus();
+  }
+},true);
+$('nodes').addEventListener('compositionend',event=>{
+  if(event.target.matches('textarea[data-field="text"]'))showMentionMenu(event.target);
+});
 $('nodes').addEventListener('input',event=>{
   const slider=event.target.closest('[data-color]');
   if(slider){
@@ -408,7 +479,12 @@ $('nodes').addEventListener('input',event=>{
   }
   const input=event.target.closest('[data-field]');if(!input)return;
   const node=project.nodes.find(n=>n.id===input.closest('[data-node]')?.dataset.node);if(!node||nodeLocked(node.id))return;
+  if(input.dataset.field==='text'&&['generate','edit'].includes(node.type)){
+    if(!input.dataset.mentionCommit)node.data.mentions=moveMentions(node.data.mentions,node.data.text||'',input.value);
+    delete input.dataset.mentionCommit;
+  }
   node.data[input.dataset.field]=input.value;if(input.dataset.field==='label')input.style.width=Math.min(230,Math.max(30,[...input.value].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))+'px';delete runStates[node.id];
+  if(input.matches('textarea[data-field="text"]')&&!event.isComposing)showMentionMenu(input);
   const count=input.closest('.node').querySelector('[data-char-count]');if(count)count.textContent=(node.data.text||'').length+'자';
   refreshPromptGuidance();
   checkpoint('field:'+node.id+':'+input.dataset.field);scheduleSave();
