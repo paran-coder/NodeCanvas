@@ -1,5 +1,8 @@
 import {colorSettings} from './2026-11-03-color.mjs';
 import {renderColorPanel, loadColorPanel, refreshColorPanel, colorPng} from './2026-11-03-color-panel.mjs';
+import {ensureNodeNumbers,assignNodeNumber,nodeLabel,mergeNodeCounters} from './2026-11-01-node-numbers.mjs';
+import {readImageFile,imageGrid} from './2026-11-01-image-import.mjs';
+import {TaskQueue} from './2026-11-01-task-queue.mjs';
 import {executionPlan,requestForNode} from './2026-11-01-execution.mjs';
 import {nodeIcon,portIcon} from './2026-11-01-icons.mjs';
 import {getSkill,createSkillNodeData} from './2026-11-01-skills.mjs';
@@ -10,7 +13,7 @@ import {projectUsage,usageNotice} from './2026-11-01-usage.mjs';
 import {promptPresentation} from './2026-11-01-node-layout.mjs';
 import {uploadApplies} from './2026-10-31-assets.mjs';
 import {EditHistory} from './2026-10-31-history.mjs';
-import {saveProject} from './2026-10-31-storage.mjs';
+import {getSpace,saveProject} from './2026-10-31-storage.mjs';
 import {settleEdits} from './2026-10-31-spaces.mjs';
 import {initializeLibrary} from './2026-10-31-library.mjs';
 import {NODE_WIDTH,nodeDragAllowed,uploadClick,PORT_Y,portsFor,portOffset,screenToWorld,curvePath,makeConnection,compatibleTypes,menuPosition,isImeKey} from './2026-10-31-canvas.mjs';
@@ -23,9 +26,12 @@ const tints={color:'#c3faf5',skill:'#fff0da',prompt:'#e8edff',image:'#fde0f0',ge
 let projectSession=0;
 let activeSpaceId=null,library=null,dirty=false,saveRevision=0,saveQueue=Promise.resolve();
 let project=starterProject(),selected='generate-start',pendingPort=null,drag=null;
-let view={x:0,y:0,scale:1},saveTimer,toastTimer,busy=false,cancelled=false,activeJob=null,uploadTarget=null;
+let view={x:0,y:0,scale:1},saveTimer,toastTimer,busy=false,uploadTarget=null;
 let menuContext=null,actionTarget=null,suppressClickUntil=0,menuCategory='all',tool='select';
-const runStates={},history=[];
+const selectedIds=new Set(['generate-start']);let spaceHeld=false;
+const marquee=document.createElement('div');marquee.className='selection-box';marquee.hidden=true;$('viewport').append(marquee);
+let runStates={};const stateByProject=new Map(),history=[];let applyingUpdate=false,transitioning=false,transitionRelease=null,workspaceTail=Promise.resolve();
+const taskQueue=new TaskQueue({execute:executeTask,cancel:cancelProviderTask,onChange:taskChanged});
 const bridge={url:'http://127.0.0.1:7330',token:'',connected:false,account:null,loginPending:false};
 let updates=null;
 let leaseController=null,leaseToken='',connectorPresent=false;
@@ -36,7 +42,11 @@ function notify(message,error=false){$('toast').textContent=message;$('toast').c
 let usageFrame=0;
 function scheduleUsage(){if(usageFrame)return;usageFrame=requestAnimationFrame(()=>{usageFrame=0;const metrics=projectUsage(project),notice=usageNotice(metrics);$('project-usage-metrics').innerHTML=metrics.map(m=>`<span class="usage-metric ${m.level}" data-usage="${m.key}">${m.display}</span>`).join('');$('project-usage').dataset.severity=notice.severity;const warning=$('project-usage-warning');if(warning.textContent!==notice.text)warning.textContent=notice.text;warning.hidden=!notice.text;});}
 function connectionMessage(message,error=false){$('connection-message').textContent=message;$('connection-message').classList.toggle('error',error);}
-function editable(){if(busy){notify('실행이 끝난 뒤 워크플로를 수정하세요.');return false;}return true;}
+function nodeLocked(id){return applyingUpdate||Boolean(id&&taskQueue.locked(activeSpaceId,id));}
+function editable(id){if(applyingUpdate){notify('연결 앱 업데이트가 끝난 뒤 수정하세요.');return false;}if(nodeLocked(id)){notify('이 노드는 실행·대기 중인 작업에서 사용하고 있습니다. 다른 노드를 편집하거나 작업을 취소하세요.');return false;}return true;}
+function projectEditable(){if(taskQueue.hasProject(activeSpaceId)){notify('이 프로젝트의 작업을 완료하거나 취소한 뒤 실행 취소·템플릿 교체를 사용하세요.');return false;}return editable();}
+async function acquireWorkspace(){const previous=workspaceTail;let release;workspaceTail=new Promise(resolve=>{release=resolve;});await previous;return release;}
+function endTransition(){transitioning=false;const release=transitionRelease;transitionRelease=null;release?.();document.querySelector('.app-header').inert=false;document.querySelector('.workspace').inert=false;}
 function scheduleSave(){
  scheduleUsage();
  if(!activeSpaceId)return;dirty=true;saveRevision++;$('save-state').dataset.state='saving';$('save-state').textContent='저장 중…';clearTimeout(saveTimer);saveTimer=setTimeout(()=>void persistCurrent().catch(error=>{notify(error.message,true);}),400);
@@ -46,14 +56,14 @@ async function persistCurrent(){
  if(!activeSpaceId||!dirty)return saveQueue;
  let snapshot;try{snapshot=normalizeProject(project);}catch(error){$('save-state').dataset.state='error';$('save-state').textContent='저장 실패';$('retry-save').hidden=false;throw error;}
  const id=activeSpaceId,revision=saveRevision;
- saveQueue=saveQueue.catch(()=>{}).then(()=>saveProject(snapshot,id,{expectedRevision:spaceRevisions.get(id)})).then(record=>{spaceRevisions.set(id,record.revision);if(revision===saveRevision){dirty=false;$('save-state').dataset.state='saved';$('save-state').textContent='자동 저장됨';$('retry-save').hidden=true;}}).catch(error=>{$('save-state').dataset.state='error';$('save-state').textContent='저장 실패';$('retry-save').hidden=false;throw error;});return saveQueue;
+ saveQueue=saveQueue.catch(()=>{}).then(()=>saveProject(snapshot,id,{expectedRevision:spaceRevisions.get(id)})).then(record=>{spaceRevisions.set(id,record.revision);if(id===activeSpaceId&&revision===saveRevision){dirty=false;$('save-state').dataset.state='saved';$('save-state').textContent='자동 저장됨';$('retry-save').hidden=true;}}).catch(error=>{$('save-state').dataset.state='error';$('save-state').textContent='저장 실패';$('retry-save').hidden=false;throw error;});return saveQueue;
 }
-async function leaveProject(){if(!editable())throw new Error('실행을 완료한 뒤 프로젝트를 전환하세요.');document.querySelector('.app-header').inert=true;document.querySelector('.workspace').inert=true;clearTimeout(saveTimer);await settleEdits(()=>dirty,persistCurrent);cancelWire();closeMenus();}
-function enterProject(record){const next=normalizeProject(record.project,{allowOversized:true});projectSession++;activeSpaceId=record.id;spaceRevisions.set(record.id,record.revision);project=next;dirty=false;selected=null;editHistory.reset(project);Object.keys(runStates).forEach(k=>delete runStates[k]);history.length=0;historyRender();renderAll();readableView();$('retry-save').hidden=true;$('save-state').dataset.state='saved';$('save-state').textContent='자동 저장됨';if(projectBytes(project)>MAX_PROJECT_BYTES)notify('이전 저장본이 200MB를 넘습니다. 이미지를 개별 저장하고 노드를 줄이면 다시 저장할 수 있어요.',true);}
-function releaseProject(){projectSession++;activeSpaceId=null;project={version:'1.0.0',name:'',nodes:[],edges:[]};dirty=false;selected=null;editHistory.reset(project);Object.keys(runStates).forEach(k=>delete runStates[k]);history.length=0;historyRender();$('image-file').value='';renderAll();}
-function updateEditControls(){$('undo-edit').disabled=busy||!editHistory.canUndo;$('redo-edit').disabled=busy||!editHistory.canRedo;}
+async function leaveProject(){if(applyingUpdate)throw new Error('연결 앱 업데이트가 끝난 뒤 프로젝트를 전환하세요.');if(!transitioning){transitionRelease=await acquireWorkspace();transitioning=true;}document.querySelector('.app-header').inert=true;document.querySelector('.workspace').inert=true;clearTimeout(saveTimer);await settleEdits(()=>dirty,persistCurrent);cancelWire();closeMenus();}
+function enterProject(record){const next=normalizeProject(record.project,{allowOversized:true}),numbered=ensureNodeNumbers(next);projectSession++;activeSpaceId=record.id;spaceRevisions.set(record.id,record.revision);project=next;dirty=false;selected=null;selectedIds.clear();editHistory.reset(project);runStates=stateByProject.get(record.id)||{};stateByProject.set(record.id,runStates);historyRender();renderAll();readableView();$('retry-save').hidden=true;$('save-state').dataset.state='saved';$('save-state').textContent='자동 저장됨';if(projectBytes(project)>MAX_PROJECT_BYTES)notify('이전 저장본이 200MB를 넘습니다. 이미지를 개별 저장하고 노드를 줄이면 다시 저장할 수 있어요.',true);else if(numbered)scheduleSave();}
+function releaseProject(){projectSession++;activeSpaceId=null;project={version:'1.0.0',name:'',nodes:[],edges:[]};dirty=false;selected=null;selectedIds.clear();editHistory.reset(project);runStates={};historyRender();$('image-file').value='';renderAll();}
+function updateEditControls(){$('undo-edit').disabled=applyingUpdate||taskQueue.hasProject(activeSpaceId)||!editHistory.canUndo;$('redo-edit').disabled=applyingUpdate||taskQueue.hasProject(activeSpaceId)||!editHistory.canRedo;}
 function checkpoint(group=null){editHistory.record(project,group);updateEditControls();}
-function undoEdit(redo=false){if(!editable())return;const next=redo?editHistory.redo():editHistory.undo();if(!next)return;project=next;selected=null;cancelWire();closeMenus();renderAll();scheduleSave();}
+function undoEdit(redo=false){if(!projectEditable())return;const next=redo?editHistory.redo():editHistory.undo();if(!next)return;mergeNodeCounters(next,project);project=next;selected=null;selectedIds.clear();cancelWire();closeMenus();renderAll();scheduleSave();}
 function updateView(){
   $('world').style.transform=`translate(${view.x}px,${view.y}px) scale(${view.scale})`;
   $('zoom-label').textContent=Math.round(view.scale*100)+'%';
@@ -82,7 +92,7 @@ function renderEdges(){
   $('edges').innerHTML=project.edges.map(edge=>{
     const source=project.nodes.find(n=>n.id===edge.from),target=project.nodes.find(n=>n.id===edge.to);if(!source||!target)return '';
     const d=curvePath(portPoint(source.id,'output'),portPoint(target.id,'input',outputKind(source.type)));
-    return `<g class="edge-group" data-edge="${esc(edge.id)}" style="--edge-color:${source.type==='skill'?'#a36b26':TYPES[source.type].output==='text'?'#4262ff':'#79609e'}" role="button" tabindex="0" aria-label="${esc(source.data.label||TYPES[source.type].label)}에서 ${esc(target.data.label||TYPES[target.type].label)} 연결 해제"><path class="edge-hit" d="${d}"/><path class="edge" d="${d}"/></g>`;
+    return `<g class="edge-group" data-edge="${esc(edge.id)}" style="--edge-color:${source.type==='skill'?'#a36b26':TYPES[source.type].output==='text'?'#4262ff':'#79609e'}" role="button" tabindex="0" aria-label="${esc(nodeLabel(source,TYPES[source.type].label))}에서 ${esc(nodeLabel(target,TYPES[target.type].label))} 연결 해제"><path class="edge-hit" d="${d}"/><path class="edge" d="${d}"/></g>`;
   }).join('');
 }
 function renderWire(point){
@@ -91,13 +101,17 @@ function renderWire(point){
   const d=pendingPort.direction==='output'?curvePath(origin,point):curvePath(point,origin);
   $('wire-preview').innerHTML=`<path class="wire" d="${d}"/>`;
 }
+function displayedImage(node){return node?(runStates[node.id]?.previewImage||node.data.image):'';}
+function progressMarkup(node){const state=runStates[node.id];if(!['queued','running','cancelling','failed','cancelled'].includes(state?.state))return '';const running=['running','cancelling'].includes(state.state),waiting=state.state==='queued';const label=state.state==='cancelling'?'취소 요청 중':waiting?'생성 대기 중':state.state==='failed'?'생성을 완료하지 못했어요':state.state==='cancelled'?'생성이 취소됐어요':state.phase||'이미지 생성 중';return `<div class="node-progress ${running?'is-running':waiting?'is-waiting':'is-error'}" role="status"><div class="progress-content"><span class="progress-symbol" aria-hidden="true">${running?'':waiting?'◷':'!'}</span><strong class="progress-title">${esc(label)}</strong><span class="progress-detail">${waiting?'앞선 작업이 끝나면 시작합니다':state.state==='failed'?'작업 목록에서 오류를 확인하세요':state.state==='cancelled'?'지시를 확인한 뒤 다시 생성할 수 있어요':'다른 작업을 준비해도 괜찮아요'}</span>${state.startedAt&&running?`<span class="progress-elapsed" aria-live="off" data-start="${state.startedAt}">${Math.floor((Date.now()-state.startedAt)/1000)}초 경과</span>`:''}</div></div>`;}
 function preview(node,kind='generate'){
+  const progress=progressMarkup(node);if(progress){const displayImage=runStates[node.id]?.previewImage||node.data.image;const image=isImage(displayImage)?`<img class="node-preview" src="${displayImage}" alt="${runStates[node.id]?.previewImage?'수신한 생성 이미지':'이전 생성 이미지'}" draggable="false">`:'<div class="image-placeholder media-empty"></div>';return `<div class="node-media-stage ${isImage(displayImage)?'has-image':''}">${image}${progress}</div>`;}
+
   if(isImage(node.data.image)){const img=`<img class="node-preview" src="${node.data.image}" alt="${esc(TYPES[node.type].label)} 이미지" draggable="false">`;return node.type==='image'?`<div class="upload-surface" data-upload-surface role="button" tabindex="0" aria-label="업로드 이미지 바꾸기">${img}</div>`:img;}
   if(kind==='image')return '<button type="button" class="image-placeholder upload-node" data-upload-surface aria-label="이미지 파일 선택"><span class="placeholder-symbol">↥</span><strong>이미지 업로드</strong><span>파일을 선택해 시작하세요</span></button>';
   return `<div class="image-placeholder media-empty"><span class="placeholder-symbol">✦</span><span>이미지 미리보기</span></div>`;
 }
 function promptSources(info){return info.sources.length?`<div class="prompt-source-status">연결된 텍스트 사용 중${info.sources.map(source=>`<button type="button" data-prompt-source="${esc(source.id)}" title="원본 텍스트 편집">${esc(source.label)}${source.empty?' · 내용 없음':''} ↗</button>`).join('')}</div>`:'';}
-function field(n,label,short=false){const info=short?promptPresentation(project,n):{label,placeholder:'원하는 장면이나 재사용할 지시문을 입력하세요…',sources:[]};return `${short?`<div class="prompt-sources" data-sources-for="${esc(n.id)}">${promptSources(info)}</div>`:''}<label class="node-field ${short?'inline-prompt':''}"><span class="field-label">${esc(info.label)}</span><textarea class="node-text ${short?'short':''}" data-field="text" aria-label="${esc(TYPES[n.type].label)} ${esc(info.label)}" maxlength="16000" ${busy?'disabled':''} placeholder="${esc(hasSkill(n)?skillHint(n):info.placeholder)}">${esc(n.data.text||'')}</textarea></label>`;}
+function field(n,label,short=false){const info=short?promptPresentation(project,n):{label,placeholder:'원하는 장면이나 재사용할 지시문을 입력하세요…',sources:[]};return `${short?`<div class="prompt-sources" data-sources-for="${esc(n.id)}">${promptSources(info)}</div>`:''}<label class="node-field ${short?'inline-prompt':''}"><span class="field-label">${esc(info.label)}</span><textarea class="node-text ${short?'short':''}" data-field="text" aria-label="${esc(TYPES[n.type].label)} ${esc(info.label)}" maxlength="16000" ${nodeLocked(n.id)?'disabled':''} placeholder="${esc(hasSkill(n)?skillHint(n):info.placeholder)}">${esc(n.data.text||'')}</textarea></label>`;}
 function nodeSkill(node){const source=project.edges.filter(e=>e.to===node.id).map(e=>project.nodes.find(n=>n.id===e.from)).find(n=>n?.type==='skill');return getSkill(source?.data.skill);}
 function skillHint(node){return nodeSkill(node)?.promptHint||'예: 얼굴과 배경은 유지하고 앞머리가 있는 단발로 바꿔 주세요…';}
 function nodeRatio(node){return nodeSkill(node)?.ratio||node.data.ratio||'1:1';}
@@ -105,45 +119,57 @@ function hasSkill(node){return project.edges.some(e=>e.to===node.id&&project.nod
 function skillStatus(node){const source=project.edges.filter(e=>e.to===node.id).map(e=>project.nodes.find(n=>n.id===e.from)).find(n=>n?.type==='skill');const skill=getSkill(source?.data.skill);return skill?`<div class="skill-connected">${nodeIcon('skill')}<span>${esc(skill.name)} 연결됨</span></div>`:'';}
 function refreshPromptGuidance(){for(const node of project.nodes.filter(n=>['generate','edit'].includes(n.type))){const el=document.querySelector(`[data-node="${node.id}"]`);if(!el)continue;const info=promptPresentation(project,node),input=el.querySelector('textarea');el.querySelector('.prompt-sources').innerHTML=promptSources(info);el.querySelector('.inline-prompt .field-label').textContent=info.label;input.placeholder=hasSkill(node)?skillHint(node):info.placeholder;input.setAttribute('aria-label',TYPES[node.type].label+' '+info.label);}}
 const mediaObserver=new ResizeObserver(entries=>{for(const entry of entries){const el=entry.target.closest('[data-node]');if(!el)continue;const node=project.nodes.find(n=>n.id===el.dataset.node);if(!node)continue;const inputs=portsFor(node.type).filter(p=>p.direction==='input'),center=Math.max(inputs.length===3?48:0,entry.target.offsetHeight/2),spread=32;for(const port of el.querySelectorAll('.port')){const index=inputs.findIndex(p=>p.kind===port.dataset.inputKind),offset=inputs.length===3?(index-1)*spread:port.dataset.inputKind==='prompt'?-spread:spread;port.style.setProperty('--port-y',(port.classList.contains('input')?center+offset:center)+'px');}}renderEdges();});
-function observeMedia(){mediaObserver.disconnect();document.querySelectorAll('.node-content > .node-preview,.upload-surface').forEach(el=>mediaObserver.observe(el));}
+function observeMedia(){mediaObserver.disconnect();document.querySelectorAll('.node-content > .node-preview,.node-media-stage,.upload-surface').forEach(el=>mediaObserver.observe(el));}
 function renderPorts(node){return portsFor(node.type).map(port=>`<button type="button" class="port ${port.direction} port-${port.kind}" style="--port-y:${portOffset(node.type,port.direction,port.kind)}px" data-${port.direction}="${esc(node.id)}" data-input-kind="${port.kind}" aria-label="${esc(TYPES[node.type].label)} ${port.label} ${port.direction==='input'?'입력':'출력'} 연결" title="${port.label} · ${port.description}"><span class="port-icon" aria-hidden="true">${portIcon(port.kind)}</span><span class="port-caption" aria-hidden="true">${port.label}</span><span class="port-description" aria-hidden="true">${port.description}</span></button>`).join('');}
-function renderNodeTools(node){const type=TYPES[node.type];return `<div class="node-tools" role="group" aria-label="${esc(type.label)} 빠른 도구">${type.output==='image'?`<button type="button" data-action="download" aria-label="${esc(type.label)} 이미지 저장" title="이미지 저장 · AI를 다시 실행하지 않습니다" ${!isImage(node.data.image)?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg><span class="tool-tip">이미지 저장</span></button>`:''}<button type="button" data-action="duplicate" aria-label="${esc(type.label)} 노드 복제" title="노드 복제" ${busy?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg><span class="tool-tip">복제</span></button><button type="button" data-action="delete" aria-label="${esc(type.label)} 노드 삭제" title="노드 삭제" ${busy?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></svg><span class="tool-tip">삭제</span></button></div>`;}
+function renderNodeTools(node){const type=TYPES[node.type];return `<div class="node-tools" role="group" aria-label="${esc(type.label)} 빠른 도구">${type.output==='image'?`<button type="button" data-action="download" aria-label="${esc(type.label)} 이미지 저장" title="이미지 저장 · AI를 다시 실행하지 않습니다" ${!isImage(displayedImage(node))?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg><span class="tool-tip">이미지 저장</span></button>`:''}<button type="button" data-action="duplicate" aria-label="${esc(type.label)} 노드 복제" title="노드 복제" ${nodeLocked(node.id)?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg><span class="tool-tip">복제</span></button><button type="button" data-action="delete" aria-label="${esc(type.label)} 노드 삭제" title="노드 삭제" ${nodeLocked(node.id)?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></svg><span class="tool-tip">삭제</span></button></div>`;}
 function colorSource(node) {
   const edge = project.edges.find(edge => edge.to === node.id);
   const image = project.nodes.find(source => source.id === edge?.from && source.type === 'edit')?.data.image;
   return isImage(image) ? image : '';
 }
-function renderNodes(){
-  
-  $('nodes').innerHTML=project.nodes.map((n,index)=>{
+function renderNodeMarkup(n,index=0){
     const type=TYPES[n.type],state=runStates[n.id],media=requiresMedia(n.type);let content='';
     if(n.type==='skill')content=`<div class="skill-card-body"><p>${esc(getSkill(n.data.skill)?.description||'선택한 이미지 제작 지침')}</p></div>`;
     if(n.type==='prompt')content=`${field(n,'프롬프트')}<div class="text-footer"><span data-char-count>${(n.data.text||'').length}자</span><span>텍스트</span></div>`;
     if(n.type==='image')content=preview(n,'image')+(n.data.image?'<div class="node-settings"><button class="button quiet" data-action="upload">이미지 바꾸기</button><button class="button quiet" data-action="download">저장 ↗</button></div>':'');
-    if(['generate','edit'].includes(n.type))content=`${preview(n,n.type==='generate'?'generate':'edit')}${skillStatus(n)}${field(n,n.type==='edit'?'편집 지시':'프롬프트',true)}<div class="node-settings"><label class="ratio-control"><span class="field-label">비율</span><select data-field="ratio" aria-label="${esc(type.label)} 이미지 비율" ${busy||Boolean(nodeSkill(n)?.ratio)?'disabled':''} title="${nodeSkill(n)?.ratio?'선택한 스킬의 가로형 비율을 사용합니다.':'이미지 비율'}">${['1:1','3:2','2:3','16:9','9:16'].map(r=>`<option ${r===nodeRatio(n)?'selected':''}>${r}</option>`).join('')}</select></label><button class="button primary node-run" title="이 노드를 새로 실행합니다. 앞쪽에 완성된 이미지는 재사용합니다." data-run="${esc(n.id)}" ${busy?'disabled':''}>${n.type==='edit'?'편집하기':'생성하기'} <span>↗</span></button>${n.data.image?'<button class="icon-button" data-action="download" aria-label="생성 이미지 저장">↓</button>':''}</div>`;
-    if(n.type==='color')content=renderColorPanel(n,colorSource(n),busy);
-    const status=state?.state==='running'?'생성 중':state?.state==='completed'?'완료':state?.state==='reused'?'기존 결과 사용':state?.state==='failed'?'확인 필요':'';
-    return `<article class="node ${media?'media-node':n.type==='skill'?'text-node skill-node':'text-node'} ${selected===n.id?'selected':''} ${state?.state==='failed'?'error-node':''}" style="left:${n.x}px;top:${n.y}px;--node-tint:${tints[n.type]};--port-color:${n.type==='skill'?'#a36b26':type.output==='text'?'#4262ff':'#79609e'}" data-node="${esc(n.id)}" aria-label="${esc(type.label)} 노드"><div class="node-header" data-drag="${esc(n.id)}"><span class="node-icon" title="이 영역을 끌어 노드 이동">${nodeIcon(n.type)}</span><input class="node-label" data-field="label" aria-label="${esc(type.label)} 노드 이름" value="${esc(n.data.label||type.label)}" maxlength="80" ${busy?'disabled':''}><span class="node-state ${esc(state?.state||'')}">${esc(status)}</span>${renderNodeTools(n)}<button class="node-help" data-action="help" aria-label="${esc(type.label)} 사용 방법" title="${esc(type.label)} 사용 방법">?</button></div>${renderPorts(n)}<div class="node-content">${content}</div></article>`;
-  }).join('');
-  for(const node of project.nodes.filter(node=>node.type==='color')){
+    if(['generate','edit'].includes(n.type))content=`${preview(n,n.type==='generate'?'generate':'edit')}${skillStatus(n)}${field(n,n.type==='edit'?'편집 지시':'프롬프트',true)}<div class="node-settings"><label class="ratio-control"><span class="field-label">비율</span><select data-field="ratio" aria-label="${esc(type.label)} 이미지 비율" ${nodeLocked(n.id)||Boolean(nodeSkill(n)?.ratio)?'disabled':''} title="${nodeSkill(n)?.ratio?'선택한 스킬의 가로형 비율을 사용합니다.':'이미지 비율'}">${['1:1','3:2','2:3','16:9','9:16'].map(r=>`<option ${r===nodeRatio(n)?'selected':''}>${r}</option>`).join('')}</select></label><button class="button primary node-run" title="이 노드를 새로 실행합니다. 앞쪽에 완성된 이미지는 재사용합니다." data-run="${esc(n.id)}" ${nodeLocked(n.id)?'disabled':''}>${n.type==='edit'?'편집하기':'생성하기'} <span>↗</span></button>${n.data.image?'<button class="icon-button" data-action="download" aria-label="생성 이미지 저장">↓</button>':''}</div>`;
+    if(n.type==='color')content=renderColorPanel(n,colorSource(n),nodeLocked(n.id));
+    const status=state?.state==='queued'?'대기 중':state?.state==='cancelling'?'취소 중':state?.state==='running'?'생성 중':state?.state==='completed'?'완료':state?.state==='reused'?'기존 결과 사용':state?.state==='failed'?'확인 필요':'';
+    return `<article class="node ${media?'media-node':n.type==='skill'?'text-node skill-node':'text-node'} ${selectedIds.has(n.id)?'selected':''} ${state?.state==='failed'?'error-node':''}" style="left:${n.x}px;top:${n.y}px;--node-tint:${tints[n.type]};--port-color:${n.type==='skill'?'#a36b26':type.output==='text'?'#4262ff':'#79609e'}" data-node="${esc(n.id)}" aria-label="${esc(nodeLabel(n,type.label))} 노드"><div class="node-header" data-drag="${esc(n.id)}"><span class="node-icon" title="이 영역을 끌어 노드 이동">${nodeIcon(n.type)}</span><span class="node-name"><input class="node-label" style="width:${Math.min(230,Math.max(30,[...(n.data.label||type.label)].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))}px" data-field="label" aria-label="${esc(type.label)} 노드 이름" value="${esc(n.data.label||type.label)}" maxlength="80" ${nodeLocked(n.id)?'disabled':''}><span class="node-sequence" aria-label="노드 번호 ${n.data.sequence}">#${n.data.sequence}</span></span><span class="node-state ${esc(state?.state||'')}">${esc(status)}</span>${renderNodeTools(n)}<button class="node-help" data-action="help" aria-label="${esc(type.label)} 사용 방법" title="${esc(type.label)} 사용 방법">?</button></div>${renderPorts(n)}<div class="node-content">${content}</div></article>`;
+}
+const colorPanelSources=new WeakMap();
+function hydrateColorPanels(){
+  for(const node of project.nodes){
+    if(node.type!=='color')continue;
+    const panel=document.querySelector(`[data-node="${node.id}"] .color-panel`);
     const source=colorSource(node);
-    if(source)void loadColorPanel(document.querySelector(`[data-node="${node.id}"] .color-panel`),source,node);
+    if(!panel||!source||colorPanelSources.get(panel)===source)continue;
+    colorPanelSources.set(panel,source);
+    void loadColorPanel(panel,source,node);
   }
+}
+function renderNodes(){
+  $('nodes').innerHTML=project.nodes.map(renderNodeMarkup).join('');hydrateColorPanels();
   observeMedia();renderEdges();scheduleUsage();$('graph-stats').textContent=`${project.nodes.length}개 노드 · ${project.edges.length}개 연결`;$('empty-state').hidden=project.nodes.length>0;updatePendingPorts();
 }
 function updatePendingPorts(){
  $('world').classList.toggle('connecting',Boolean(pendingPort));
  document.querySelectorAll('.port').forEach(el=>{const port=pointerPort(el),same=pendingPort?.id===port.id&&pendingPort.direction===port.direction&&pendingPort.kind===port.kind;const pair=wirePair(pendingPort,port);const compatible=Boolean(pair&&canConnect(project.nodes.find(n=>n.id===pair.from),project.nodes.find(n=>n.id===pair.to),pair.inputKind));el.classList.toggle('pending',Boolean(same));el.classList.toggle('compatible',compatible);el.classList.toggle('incompatible',Boolean(pendingPort&&!same&&!compatible));});
 }
-function renderAll(){renderNodes();$('project-name').value=project.name;updateEditControls();}
+function renderAll(){ensureNodeNumbers(project);renderNodes();$('project-name').value=project.name;refreshBusy();}
 function changed(){checkpoint();renderAll();scheduleSave();}
-function select(id){selected=id;document.querySelectorAll('.node').forEach(el=>el.classList.toggle('selected',el.dataset.node===id));renderEdges();}
+function paintSelection(){document.querySelectorAll('.node').forEach(el=>el.classList.toggle('selected',selectedIds.has(el.dataset.node)));renderEdges();}
+function select(id){selectedIds.clear();if(id)selectedIds.add(id);selected=id;paintSelection();}
+function toggleSelection(id){if(selectedIds.has(id))selectedIds.delete(id);else selectedIds.add(id);selected=selectedIds.has(id)?id:[...selectedIds].at(-1)||null;paintSelection();}
+function hideMarquee(){marquee.hidden=true;}
+function finishTemporaryPan(){spaceHeld=false;$('viewport').classList.toggle('pan-mode',tool==='pan');}
+
 function closeMenus(returnFocus=false){$('node-menu').hidden=true;$('action-menu').hidden=true;$('template-menu').hidden=true;menuContext=null;if(returnFocus)$('viewport').focus({preventScroll:true});}
-function cancelWire(){pendingPort=null;drag=null;renderWire();updatePendingPorts();document.querySelectorAll('.compatible').forEach(el=>el.classList.remove('compatible'));}
-function deleteNode(id){if(!editable())return;const node=project.nodes.find(n=>n.id===id);if(!node||!confirm(`“${node.data.label||TYPES[node.type].label}” 노드와 연결을 삭제할까요?`))return;project.nodes=project.nodes.filter(n=>n.id!==id);project.edges=project.edges.filter(e=>e.from!==id&&e.to!==id);selected=null;cancelWire();closeMenus();changed();}
-function duplicateNode(id){if(!editable())return;const node=project.nodes.find(n=>n.id===id);if(!node)return;if(project.nodes.length>=MAX_NODE_COUNT)return notify('노드는 150개까지 추가할 수 있습니다.',true);const copy=structuredClone(node);copy.id=uuid();copy.x+=45;copy.y+=55;project.nodes.push(copy);selected=copy.id;closeMenus();changed();}
+function cancelWire(){hideMarquee();pendingPort=null;drag=null;renderWire();updatePendingPorts();document.querySelectorAll('.compatible').forEach(el=>el.classList.remove('compatible'));}
+function deleteNode(id){if(!editable(id))return;const node=project.nodes.find(n=>n.id===id);if(!node||!confirm(`“${nodeLabel(node,TYPES[node.type].label)}” 노드와 연결을 삭제할까요?`))return;project.nodes=project.nodes.filter(n=>n.id!==id);project.edges=project.edges.filter(e=>e.from!==id&&e.to!==id);selected=null;selectedIds.clear();cancelWire();closeMenus();changed();}
+function duplicateNode(id){if(!editable())return;const node=project.nodes.find(n=>n.id===id);if(!node)return;if(project.nodes.length>=MAX_NODE_COUNT)return notify('노드는 150개까지 추가할 수 있습니다.',true);const copy=structuredClone(node);copy.id=uuid();copy.x+=45;copy.y+=55;try{assignNodeNumber(project,copy);}catch(error){return notify(error.message,true);}project.nodes.push(copy);selected=copy.id;selectedIds.clear();selectedIds.add(copy.id);closeMenus();changed();}
 function tryConnect(from,to,inputKind=null){
-  if(!editable())return false;
+  if(!editable(from)||!editable(to))return false;
   try{project.edges.push(makeConnection(project,from,to,uuid(),inputKind));cancelWire();$('canvas-hint').textContent='연결했습니다 · 입력한 내용이 다음 노드로 전달됩니다';checkpoint();renderNodes();scheduleSave();return true;}catch(error){notify(error.message,true);return false;}
 }
 function addNode(type,skillId){
@@ -151,9 +177,9 @@ function addNode(type,skillId){
   if(!editable())return;if(project.nodes.length>=MAX_NODE_COUNT)return notify('노드는 150개까지 추가할 수 있습니다.',true);
   const rect=$('viewport').getBoundingClientRect(),location=menuContext?.world||screenToWorld({x:rect.left+rect.width/2,y:rect.top+rect.height/2},rect,view);
   const node={id:uuid(),type,x:Math.round(location.x),y:Math.round(location.y),data:type==='skill'?createSkillNodeData(skillId):{text:'',ratio:'1:1',label:TYPES[type].label}};
-  const origin=menuContext?.port;const candidate={...project,nodes:[...project.nodes,node]};
-  if(origin){try{const edge=origin.direction==='output'?makeConnection(candidate,origin.id,node.id,uuid()):makeConnection(candidate,node.id,origin.id,uuid(),origin.kind);project.edges.push(edge);}catch(error){return notify(error.message,true);}}
-  project.nodes.push(node);selected=node.id;cancelWire();closeMenus();changed();
+  const origin=menuContext?.port;if(origin&&!editable(origin.id))return;const candidate={...project,nodes:[...project.nodes,node]};
+  let edge;if(origin){try{edge=origin.direction==='output'?makeConnection(candidate,origin.id,node.id,uuid()):makeConnection(candidate,node.id,origin.id,uuid(),origin.kind);}catch(error){return notify(error.message,true);}}
+  try{assignNodeNumber(project,node);}catch(error){return notify(error.message,true);}if(edge)project.edges.push(edge);project.nodes.push(node);selected=node.id;selectedIds.clear();selectedIds.add(node.id);cancelWire();closeMenus();changed();
   requestAnimationFrame(()=>document.querySelector(`[data-node="${node.id}"] textarea`)?.focus({preventScroll:true}));
 }
 function menuTypes(){
@@ -175,19 +201,19 @@ function openNodeMenu(x,y,port=null){
   $('node-menu').style.left=pos.x+'px';$('node-menu').style.top=pos.y+'px';$('node-search').focus({preventScroll:true});
 }
 function openActionMenu(id,x,y){if(!editable())return;closeMenus();actionTarget=id;select(id);$('action-menu').hidden=false;const size=$('action-menu').getBoundingClientRect(),pos=menuPosition({x,y},{width:innerWidth,height:innerHeight},size);$('action-menu').style.left=pos.x+'px';$('action-menu').style.top=pos.y+'px';$('duplicate-node').focus({preventScroll:true});}
-function chooseImage(id){if(!editable())return;uploadTarget=id;$('image-file').value='';$('image-file').click();}
+function chooseImage(id){if(!editable(id))return;uploadTarget=id;$('image-file').value='';$('image-file').click();}
 function downloadBlob(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}
 function downloadImage(data){if(!isImage(data))return;const type=data.slice(5,data.indexOf(';')),bytes=Uint8Array.from(atob(data.split(',')[1]),c=>c.charCodeAt(0));downloadBlob(new Blob([bytes],{type}),`2026-10-31-NodeCanvas-image-v1.13.0.${type.split('/')[1]}`);}
 function exportProjectRecord(record){try{const graph=record.project||record;downloadBlob(new Blob([projectJSON(graph)],{type:'application/json'}),`2026-10-31-NodeCanvas-${graph.name.replace(/[^\w가-힣-]/g,'-').slice(0,40)}-v1.13.0.json`);notify('이미지를 포함한 프로젝트 JSON 백업을 다운로드합니다.');return true;}catch(error){notify(error.message,true);return false;}}
 function exportProject(){return exportProjectRecord(project);}
-function replaceProject(next){if(!editable())return;if(!confirm('현재 워크플로를 교체할까요? 필요한 내용은 먼저 저장으로 백업하세요.'))return;project=next;selected=next.nodes[0]?.id||null;cancelWire();closeMenus();Object.keys(runStates).forEach(k=>delete runStates[k]);history.length=0;historyRender();changed();readableView();}
+function replaceProject(next){if(!projectEditable())return;if(!confirm('현재 워크플로를 교체할까요? 필요한 내용은 먼저 저장으로 백업하세요.'))return;mergeNodeCounters(next,project);project=next;selected=next.nodes[0]?.id||null;selectedIds.clear();if(selected)selectedIds.add(selected);cancelWire();closeMenus();Object.keys(runStates).forEach(k=>delete runStates[k]);history.length=0;historyRender();changed();readableView();}
 
 async function api(route,input={},anonymous=false,timeout=42000) {
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeout);
   try {
     const response=await fetch(bridge.url+'/api/'+route,{method:'POST',mode:'cors',headers:{'Content-Type':'application/json',...(!anonymous?{Authorization:`Bearer ${bridge.token}`}:{})},body:JSON.stringify(input),signal:controller.signal});
     const data=await response.json();
-    if(!response.ok){if(response.status===401){bridge.connected=false;renderConnection();}throw new Error(data.error||'연결 요청에 실패했습니다.');}
+    if(!response.ok){if(response.status===401){bridge.connected=false;renderConnection();}throw Object.assign(new Error(data.error||'연결 요청에 실패했습니다.'),{status:response.status});}
     return data;
   } catch(error) {
     if(error.name==='AbortError')throw new Error('연결 응답 시간이 초과됐습니다. 로컬 앱을 확인하세요.');
@@ -252,59 +278,58 @@ function historyRender(){
   $('history-count').textContent=history.length;
   $('history-list').innerHTML=history.length?history.map(h=>`<div class="history-row"><span class="${h.state==='completed'?'success':'failed'}">${h.state==='completed'?'✓':'!'}</span><div>${esc(h.label)} · ${esc(h.message)}${timingDetails(h.timings)}</div><small>${new Date(h.time).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}</small></div>`).join(''):'<div class="muted">이 탭에서 실행한 작업이 없습니다.</div>';
 }
-function setBusy(value){busy=value;updates?.render();updateEditControls();$('run-all').disabled=value;$('cancel-run').hidden=!value;$('open-project').disabled=value;document.querySelectorAll('#add-node,.template').forEach(b=>b.disabled=value);renderNodes();}
-async function runWorkflow(target){
-  if(busy)return notify('이미 실행 중입니다.');
-  let order,snapshot,reused;
-  try{snapshot=structuredClone(project);({order,reused}=executionPlan(snapshot,target));}catch(error){return notify(error.message,true);}
-  if(!order.length)return notify('노드를 먼저 추가하세요.');
-  const hasAI=order.some(id=>!reused.has(id)&&['generate','edit'].includes(snapshot.nodes.find(n=>n.id===id).type));
-  if(hasAI&&(!bridge.connected||!bridge.account)){$('connect-dialog').showModal();return connectionMessage('PC 페어링과 ChatGPT 로그인을 먼저 완료하세요.');}
-  cancelled=false;setBusy(true);const outputs={};let current;const runStarted=performance.now();let phase='요청 준비 중';
-  const elapsedTimer=setInterval(()=>{$('run-status').textContent=`${phase} · ${Math.floor((performance.now()-runStarted)/1000)}초`;},500);
-  try {
-    for(const id of order) {
-      if(cancelled)throw new Error('실행을 취소했습니다.');
-      const node=snapshot.nodes.find(n=>n.id===id);if(node.type==='color')continue;current=node;
-      if(reused.has(id)){outputs[id]={text:'',images:[node.data.image]};runStates[id]={state:'reused'};renderNodes();continue;}
-      const inputs=collectInputs(snapshot,id,outputs);
-      runStates[id]={state:'running'};$('run-status').textContent=`${node.data.label||TYPES[node.type].label} 실행 중`;renderNodes();
-      if(node.type==='prompt')outputs[id]={text:node.data.text||'',images:[]};
-      else if(node.type==='skill')outputs[id]={skills:[node.data.skill]};
-      else if(node.type==='image'){
-        if(!isImage(node.data.image))throw new Error('참조 이미지 노드에 이미지를 불러오세요.');
-        outputs[id]={text:'',images:[node.data.image]};
-      } else {
-        const request=requestForNode(node,inputs);
-        const response=await api('jobs',request);
-        activeJob=response.id;
-        while(true){
-          if(cancelled)throw new Error('실행을 취소했습니다.');
-          const job=await api('job',{id:activeJob});phase=job.message;$('run-status').textContent=`${phase} · ${Math.floor((performance.now()-runStarted)/1000)}초`;
-          if(job.images?.[0]){const real=project.nodes.find(n=>n.id===id);if(real&&real.data.image!==job.images[0]){real.data.image=job.images[0];scheduleSave();renderNodes();}}
-          if(job.timings?.length){runStates[id].timings=job.timings;}
-          if(job.state==='completed'){outputs[id]={text:'',images:job.images};break;}
-          if(['failed','cancelled'].includes(job.state))throw new Error(job.message);
-          await new Promise(resolve=>setTimeout(resolve,1300));
-        }
-        activeJob=null;
-      }
-      if(outputs[id].images?.length){
-        const real=project.nodes.find(n=>n.id===id);if(real)real.data.image=outputs[id].images[0];
-        snapshot.nodes.find(n=>n.id===id).data.image=outputs[id].images[0];
-        scheduleSave();
-      }
-      runStates[id]={...runStates[id],state:'completed'};renderNodes();
-    }
-    history.unshift({label:target?'선택 실행':'워크플로',state:'completed',message:`완료 · ${Math.round((performance.now()-runStarted)/1000)}초`,timings:Object.fromEntries(Object.entries(runStates).filter(([id])=>order.includes(id)).map(([id,state])=>[id,state.timings||[]])),time:Date.now()});
-    $('run-status').textContent='실행 완료';notify('워크플로 실행을 완료했습니다.');
-  } catch(error){
-    if(current)runStates[current.id]={state:'failed'};
-    history.unshift({label:current?.data.label||'워크플로',state:'failed',message:error.message,time:Date.now()});
-    $('run-status').textContent=cancelled?'실행 취소':'실행을 확인해 주세요';notify(error.message,true);
-    if(activeJob){await api('cancel',{id:activeJob}).catch(()=>{});activeJob=null;}
-  } finally{clearInterval(elapsedTimer);history.splice(30);historyRender();setBusy(false);checkpoint('generation');}
+function setBusy(value){applyingUpdate=value;refreshBusy();renderNodes();}
+function refreshBusy(){busy=applyingUpdate||taskQueue.pending.length>0;updates?.render();updateEditControls();$('run-all').disabled=applyingUpdate;$('cancel-run').hidden=!taskQueue.active||taskQueue.active.projectId!==activeSpaceId;$('cancel-run').title='현재 프로젝트에서 실행 중인 작업 취소';$('open-project').disabled=applyingUpdate;document.querySelectorAll('#add-node,.template').forEach(b=>b.disabled=applyingUpdate);renderConnection();}
+function refreshTaskNodes(task){if(activeSpaceId!==task.projectId)return;for(const id of task.nodeIds){const node=project.nodes.find(n=>n.id===id),el=document.querySelector(`[data-node="${id}"]`);if(node&&el)el.outerHTML=renderNodeMarkup(node);}hydrateColorPanels();observeMedia();renderEdges();}
+function renderTasks(){const pending=taskQueue.pending,active=taskQueue.active;$('task-dock').hidden=!taskQueue.items.length;$('task-summary').textContent=pending.length?`${active?'1개 실행 중 · ':''}${pending.filter(t=>t.state==='queued').length}개 대기`:'작업 완료 · 기록 보기';const html=[...taskQueue.items].reverse().map(t=>`<li><div><strong>${esc(t.projectName)} · ${esc(t.label)}</strong><span class="task-state">${esc(({queued:'생성 대기 중',running:t.phase||'이미지 생성 중',cancelling:'취소 요청 중',completed:'완료 · 저장됨',cancelled:'취소됨',failed:'확인 필요'})[t.state])}</span>${t.error?`<p class="task-error">${esc(t.error)}</p>`:''}</div>${['queued','running'].includes(t.state)?`<button class="button secondary" data-task-cancel="${esc(t.id)}">취소</button>`:''}${t.unsavedImage?`<button class="button secondary" data-task-download="${esc(t.id)}">미저장 이미지 저장</button>`:''}</li>`).join('');if($('task-items').innerHTML!==html){const focused=document.activeElement,taskId=focused?.dataset?.taskCancel,downloadId=focused?.dataset?.taskDownload,inside=$('task-items').contains(focused);$('task-items').innerHTML=html;if(inside){const next=taskId?document.querySelector(`[data-task-cancel="${taskId}"]`):downloadId?document.querySelector(`[data-task-download="${downloadId}"]`):null;(next||$('task-toggle')).focus({preventScroll:true});}}}
+function taskChanged(task){const states=stateByProject.get(task.projectId)||{};stateByProject.set(task.projectId,states);if(activeSpaceId===task.projectId)runStates=states;
+ if(task.state==='queued'){for(const id of task.writeIds)states[id]={state:'queued',taskId:task.id};}
+ if(task.state==='cancelling'){for(const id of task.nodeIds)if(states[id]?.taskId===task.id&&states[id].state==='running')states[id].state='cancelling';}
+ if(['completed','failed','cancelled'].includes(task.state)){for(const id of task.nodeIds)if(states[id]?.taskId===task.id&&['queued','running','cancelling'].includes(states[id].state))states[id]={...states[id],state:task.state==='failed'?'failed':'cancelled'};history.unshift({label:`${task.projectName} · ${task.label}`,state:task.state,message:task.error||({completed:'완료 · 원래 프로젝트에 저장됨',cancelled:'작업 취소'})[task.state],timings:task.timings,time:Date.now()});history.splice(30);historyRender();}
+ refreshTaskNodes(task);refreshBusy();renderTasks();
 }
+function nodeState(task,id,value){const states=stateByProject.get(task.projectId)||{};const changed=Object.entries(value).some(([key,val])=>states[id]?.[key]!==val);states[id]={...states[id],...value,taskId:task.id};stateByProject.set(task.projectId,states);if(activeSpaceId===task.projectId){runStates=states;if(changed)refreshTaskNodes({...task,nodeIds:[id]});}}
+function throwCancelled(signal){if(signal.aborted)throw new Error('작업을 취소했습니다.');}
+function pause(ms,signal){return new Promise(resolve=>{if(signal.aborted)return resolve();const done=()=>{clearTimeout(timer);signal.removeEventListener('abort',done);resolve();},timer=setTimeout(done,ms);signal.addEventListener('abort',done,{once:true});});}
+async function cancelProviderTask(task){if(task.providerJob)await(task.cancelPromise||=api('cancel',{id:task.providerJob}));}
+async function storeTaskImage(task,node,image){
+ task.unsavedImage=image;const release=await acquireWorkspace();try{
+ const sameData=n=>n&&n.type===node.type&&['sequence','skill','text','image','ratio','label'].every(key=>(n.data[key]??'')===(node.data[key]??''));
+ if(activeSpaceId===task.projectId){const real=project.nodes.find(n=>n.id===node.id);if(!sameData(real))throw new Error('노드 내용이 변경되어 결과를 덮어쓰지 않았습니다. 미저장 이미지 저장을 눌러 보관하세요.');real.data.image=image;checkpoint('generation:'+task.id);scheduleSave();await persistCurrent();}
+ else{let saved=false;for(let attempt=0;attempt<3;attempt++){const record=await getSpace(task.projectId);if(!record||record.trashed)throw new Error('원래 프로젝트를 열 수 없습니다. 미저장 이미지를 저장하세요.');const real=record.project.nodes.find(n=>n.id===node.id);if(!sameData(real))throw new Error('다른 탭에서 노드가 변경되어 덮어쓰지 않았습니다. 미저장 이미지를 저장하세요.');real.data.image=image;try{const next=await saveProject(record.project,task.projectId,{expectedRevision:record.revision});spaceRevisions.set(task.projectId,next.revision);saved=true;break;}catch(error){if(error.code!=='CONFLICT'||attempt===2)throw error;}}if(!saved)throw new Error('이미지 결과를 저장하지 못했습니다.');}
+ task.unsavedImage=null;
+ }finally{release();}
+}
+async function runWorkflow(target){
+ if(applyingUpdate||!activeSpaceId)return;const originId=activeSpaceId,originSession=projectSession;try{await persistCurrent();if(activeSpaceId!==originId||projectSession!==originSession)return notify('프로젝트가 바뀌어 실행 요청을 등록하지 않았습니다.');const snapshot=structuredClone(project),{order,reused}=executionPlan(snapshot,target);if(!order.length)return notify('노드를 먼저 추가하세요.');const writeIds=order.filter(id=>!reused.has(id)&&['generate','edit'].includes(snapshot.nodes.find(n=>n.id===id).type));
+ if(writeIds.length&&(!bridge.connected||!bridge.account)){$('connect-dialog').showModal();return connectionMessage('PC 페어링과 ChatGPT 로그인을 먼저 완료하세요.');}
+ const task=taskQueue.add({id:uuid(),projectId:activeSpaceId,projectName:project.name,label:target?nodeLabel(snapshot.nodes.find(n=>n.id===target),'선택 생성'):'전체 워크플로',snapshot,order,reused,nodeIds:order,writeIds});notify(taskQueue.active?'생성 대기열에 등록했습니다. 다른 작업을 준비할 수 있어요.':'작업을 등록했습니다.');
+ }catch(error){notify(error.message,true);}
+}
+async function executeTask(task,signal){
+ const record=await getSpace(task.projectId);if(!record||record.trashed)throw new Error('프로젝트가 없거나 휴지통에 있어 실행하지 않았습니다.');
+ const snapshot=task.snapshot,outputs={};task.timings={};let current;
+ try{for(const id of task.order){throwCancelled(signal);const node=snapshot.nodes.find(n=>n.id===id);if(node.type==='color')continue;current=node;
+ if(task.reused.has(id)){outputs[id]={text:'',images:[node.data.image]};continue;}
+ const inputs=collectInputs(snapshot,id,outputs);
+ if(node.type==='prompt')outputs[id]={text:node.data.text||'',images:[]};
+ else if(node.type==='skill')outputs[id]={skills:[node.data.skill]};
+ else if(node.type==='image'){if(!isImage(node.data.image))throw new Error('참조 이미지 노드에 이미지를 불러오세요.');outputs[id]={text:'',images:[node.data.image]};}
+ else{
+ nodeState(task,id,{state:'running',phase:'요청 준비 중',startedAt:Date.now()});task.phase='요청 준비 중';renderTasks();const request=requestForNode(node,inputs),deadline=Date.now()+600000;let response;
+ while(!response){throwCancelled(signal);try{response=await api('jobs',request);}catch(error){if(error.status!==409||Date.now()>deadline)throw error;task.phase='연결 앱의 다른 작업 완료 대기';nodeState(task,id,{phase:task.phase});renderTasks();await pause(2500,signal);}}
+ task.providerJob=response.id;task.cancelPromise=null;throwCancelled(signal);
+ while(true){throwCancelled(signal);const job=await api('job',{id:task.providerJob});throwCancelled(signal);if(job.timings)task.timings[id]=job.timings;task.phase=job.images?.length?'이미지 수신 · 마무리 중':job.timings?.some(t=>t.stage==='generating')?'이미지 생성 중':'AI 응답 대기 중';nodeState(task,id,{phase:task.phase,...(job.images?.[0]?{previewImage:job.images[0]}:{})});renderTasks();
+ if(job.state==='completed'){if(!job.images?.length)throw new Error('생성된 이미지를 받지 못했습니다.');outputs[id]={text:'',images:job.images};break;}
+ if(['failed','cancelled'].includes(job.state))throw new Error(job.message||'이미지 생성이 중단됐습니다.');await pause(1300,signal);}
+ task.providerJob=null;throwCancelled(signal);await storeTaskImage(task,node,outputs[id].images[0]);node.data.image=outputs[id].images[0];nodeState(task,id,{state:'completed',previewImage:null});
+ }
+ }}catch(error){if(current&&task.writeIds.includes(current.id))nodeState(task,current.id,{state:signal.aborted?'cancelled':'failed',previewImage:null});if(task.providerJob){try{await cancelProviderTask(task);}catch{}task.providerJob=null;}throw error;}
+}
+setInterval(()=>{document.querySelectorAll('.progress-elapsed[data-start]').forEach(el=>el.textContent=Math.floor((Date.now()-Number(el.dataset.start))/1000)+'초 경과');},1000);
+$('task-toggle').onclick=()=>{const list=$('task-items');list.hidden=!list.hidden;$('task-toggle').setAttribute('aria-expanded',String(!list.hidden));};
+$('task-items').onclick=event=>{const cancel=event.target.closest('[data-task-cancel]');if(cancel)void taskQueue.cancel(cancel.dataset.taskCancel).catch(error=>notify(error.message,true));const download=event.target.closest('[data-task-download]');if(download)downloadImage(taskQueue.items.find(t=>t.id===download.dataset.taskDownload)?.unsavedImage);};
+
 
 
 function pointerPort(element){const port=element?.closest?.('[data-input],[data-output]');return port?{id:port.dataset.output||port.dataset.input,direction:port.dataset.output?'output':'input',kind:port.dataset.inputKind,element:port}:null;}
@@ -312,12 +337,12 @@ function wirePair(a,b){if(!a||!b||a.direction===b.direction)return null;return a
 function resetHighlight(){document.querySelectorAll('.port.hover-compatible').forEach(el=>el.classList.remove('hover-compatible'));}
 $('viewport').addEventListener('pointerdown',event=>{
   if(event.button!==0||event.isPrimary===false)return;
-  if(tool==='pan'){closeMenus();drag={kind:'pan',startX:event.clientX,startY:event.clientY,x:view.x,y:view.y,moved:false};$('viewport').setPointerCapture(event.pointerId);event.preventDefault();return;}
+  if(tool==='pan'||spaceHeld){closeMenus();drag={kind:'pan',startX:event.clientX,startY:event.clientY,x:view.x,y:view.y,moved:false};$('viewport').setPointerCapture(event.pointerId);event.preventDefault();return;}
   const field=event.target.closest('input,textarea,select');
-  if(field){select(field.closest('[data-node]')?.dataset.node);return;}
+  if(field){const id=field.closest('[data-node]')?.dataset.node;if(event.ctrlKey||event.metaKey){event.preventDefault();toggleSelection(id);}else if(!selectedIds.has(id))select(id);return;}
   const port=pointerPort(event.target);
   if(port){
-    if(!editable())return;
+    if(!editable(port.id))return;
     closeMenus();
     const pair=wirePair(pendingPort,port);
     if(pair){tryConnect(pair.from,pair.to,pair.inputKind);suppressClickUntil=performance.now()+200;event.preventDefault();return;}
@@ -330,8 +355,8 @@ $('viewport').addEventListener('pointerdown',event=>{
     const nodeElement=event.target.closest('[data-node]');
     if(nodeElement&&!nodeDragAllowed(event.target))return;
     closeMenus();
-    if(nodeElement){if(!editable())return;const node=project.nodes.find(n=>n.id===nodeElement.dataset.node);select(node.id);drag={kind:'node',id:node.id,upload:Boolean(event.target.closest('[data-upload-surface]')),startX:event.clientX,startY:event.clientY,x:node.x,y:node.y,moved:false};}
-    else if(!event.target.closest('.node')){select(null);drag={kind:'pan',startX:event.clientX,startY:event.clientY,x:view.x,y:view.y,moved:false};}
+    if(nodeElement){if(!editable(nodeElement.dataset.node)||(selectedIds.has(nodeElement.dataset.node)&&[...selectedIds].some(nodeLocked)))return;const node=project.nodes.find(n=>n.id===nodeElement.dataset.node);if(event.ctrlKey||event.metaKey){toggleSelection(node.id);suppressClickUntil=performance.now()+200;return;}if(!selectedIds.has(node.id))select(node.id);drag={kind:'node',id:node.id,positions:project.nodes.filter(n=>selectedIds.has(n.id)).map(n=>({id:n.id,x:n.x,y:n.y})),upload:selectedIds.size===1&&Boolean(event.target.closest('[data-upload-surface]')),startX:event.clientX,startY:event.clientY,moved:false};}
+    else if(!event.target.closest('.node')){const base=event.ctrlKey||event.metaKey?[...selectedIds]:[];if(!base.length)select(null);drag={kind:'marquee',base,startX:event.clientX,startY:event.clientY,moved:false};}
     else{return;}
   }
   if(drag){$('viewport').setPointerCapture(event.pointerId);event.preventDefault();}
@@ -346,10 +371,14 @@ $('viewport').addEventListener('pointermove',event=>{
     const target=pointerPort(document.elementFromPoint(event.clientX,event.clientY)),pair=wirePair(pendingPort,target);
     if(pair){try{makeConnection(project,pair.from,pair.to,'preview-edge',pair.inputKind);target.element.classList.add('hover-compatible');}catch{}}
   }else if(drag.kind==='pan'){view.x=drag.x+dx;view.y=drag.y+dy;updateView();}
-  else{const node=project.nodes.find(n=>n.id===drag.id);if(!node)return;node.x=Math.max(-100000,Math.min(100000,Math.round(drag.x+dx/view.scale)));node.y=Math.max(-100000,Math.min(100000,Math.round(drag.y+dy/view.scale)));const element=document.querySelector(`[data-node="${node.id}"]`);element.style.left=node.x+'px';element.style.top=node.y+'px';renderEdges();}
+  else if(drag.kind==='marquee'){
+    if(!drag.moved)return;const left=Math.min(drag.startX,event.clientX),top=Math.min(drag.startY,event.clientY),right=Math.max(drag.startX,event.clientX),bottom=Math.max(drag.startY,event.clientY);
+    Object.assign(marquee.style,{left:(left-rect.left)+'px',top:(top-rect.top)+'px',width:(right-left)+'px',height:(bottom-top)+'px'});marquee.hidden=false;
+    selectedIds.clear();drag.base.forEach(id=>selectedIds.add(id));document.querySelectorAll('.node').forEach(el=>{const r=el.getBoundingClientRect();if(r.right>=left&&r.left<=right&&r.bottom>=top&&r.top<=bottom)selectedIds.add(el.dataset.node);});selected=[...selectedIds].at(-1)||null;paintSelection();
+  }else{const positions=drag.positions;let moveX=dx/view.scale,moveY=dy/view.scale;moveX=Math.max(...positions.map(p=>-100000-p.x),Math.min(moveX,...positions.map(p=>100000-p.x)));moveY=Math.max(...positions.map(p=>-100000-p.y),Math.min(moveY,...positions.map(p=>100000-p.y)));for(const origin of positions){const node=project.nodes.find(n=>n.id===origin.id);if(!node)continue;node.x=Math.round(origin.x+moveX);node.y=Math.round(origin.y+moveY);const element=document.querySelector(`[data-node="${node.id}"]`);if(element){element.style.left=node.x+'px';element.style.top=node.y+'px';}}renderEdges();}
 });
 $('viewport').addEventListener('pointerup',event=>{
-  const finished=drag;drag=null;
+  const finished=drag;drag=null;hideMarquee();
   if($('viewport').hasPointerCapture(event.pointerId))$('viewport').releasePointerCapture(event.pointerId);
   if(!finished)return;
   if(uploadClick(finished)){suppressClickUntil=performance.now()+200;resetHighlight();chooseImage(finished.id);return;}
@@ -368,8 +397,8 @@ $('viewport').addEventListener('pointercancel',()=>{if(drag?.kind==='node'&&drag
 $('nodes').addEventListener('input',event=>{
   const slider=event.target.closest('[data-color]');
   if(slider){
-    if(!editable())return;
     const node=project.nodes.find(n=>n.id===slider.closest('[data-node]').dataset.node);
+    if(nodeLocked(node.id))return;
     node.data.color=colorSettings({...node.data.color,[slider.dataset.color]:Number(slider.value)});
     slider.previousElementSibling.value=slider.value;
     refreshColorPanel(slider.closest('.color-panel'),node);
@@ -377,8 +406,8 @@ $('nodes').addEventListener('input',event=>{
     return;
   }
   const input=event.target.closest('[data-field]');if(!input)return;
-  const node=project.nodes.find(n=>n.id===input.closest('[data-node]')?.dataset.node);if(!node||busy)return;
-  node.data[input.dataset.field]=input.value;delete runStates[node.id];
+  const node=project.nodes.find(n=>n.id===input.closest('[data-node]')?.dataset.node);if(!node||nodeLocked(node.id))return;
+  node.data[input.dataset.field]=input.value;if(input.dataset.field==='label')input.style.width=Math.min(230,Math.max(30,[...input.value].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))+'px';delete runStates[node.id];
   const count=input.closest('.node').querySelector('[data-char-count]');if(count)count.textContent=(node.data.text||'').length+'자';
   refreshPromptGuidance();
   checkpoint('field:'+node.id+':'+input.dataset.field);scheduleSave();
@@ -389,11 +418,12 @@ $('nodes').addEventListener('click',event=>{
   const port=pointerPort(event.target);
   if(port){if(event.detail!==0)return;if(!editable())return;const pair=wirePair(pendingPort,port);if(pair){tryConnect(pair.from,pair.to,pair.inputKind);cancelWire();}else{pendingPort={id:port.id,direction:port.direction,kind:port.kind};updatePendingPorts();$('canvas-hint').textContent='이동할 입력/출력 포트를 Tab으로 선택하고 Enter로 연결하세요';}return;}
   if(event.target.closest('input,textarea,select'))return;
-  select(id);
+  if((event.ctrlKey||event.metaKey)&&!event.target.closest('button'))return;
+  if(!selectedIds.has(id))select(id);
   const sourceId=event.target.closest('[data-prompt-source]')?.dataset.promptSource;if(sourceId){const source=project.nodes.find(n=>n.id===sourceId);if(source){select(source.id);const rect=$('viewport').getBoundingClientRect();view.x=rect.width/2-(source.x+NODE_WIDTH/2)*view.scale;view.y=100-source.y*view.scale;updateView();document.querySelector(`[data-node="${source.id}"] textarea`)?.focus({preventScroll:true});}return;}
   const action=event.target.closest('[data-action]')?.dataset.action;
   if(action?.startsWith('color-')){
-    if(!editable())return;
+    if(nodeLocked(id))return;
     const panel=element.querySelector('.color-panel');
     const node=project.nodes.find(n=>n.id===id);
     if(action==='color-compare'){
@@ -410,7 +440,7 @@ $('nodes').addEventListener('click',event=>{
       refreshColorPanel(panel,node);checkpoint();scheduleSave();
     }
     if(action==='color-save')void colorPng(panel,node.data.color)
-      .then(blob=>downloadBlob(blob,'2026-11-03-NodeCanvas-color-v1.14.0.png'))
+      .then(blob=>downloadBlob(blob,'2026-11-03-NodeCanvas-color-v1.14.1.png'))
       .catch(error=>notify(error.message,true));
     return;
   }
@@ -419,7 +449,7 @@ $('nodes').addEventListener('click',event=>{
   if(action==='duplicate')return duplicateNode(id);
   if(action==='delete')return deleteNode(id);
   if(event.target.closest('[data-upload-surface]')){if(event.detail===0)return chooseImage(id);return;}
-  if(action==='download')return downloadImage(project.nodes.find(n=>n.id===id).data.image);
+  if(action==='download'){downloadImage(displayedImage(project.nodes.find(n=>n.id===id)));if(event.detail>0)event.target.closest('button')?.blur();return;}
   if(event.target.closest('[data-run]'))void runWorkflow(id);
 });
 $('viewport').addEventListener('contextmenu',event=>{
@@ -429,7 +459,7 @@ $('viewport').addEventListener('contextmenu',event=>{
   if(node)openActionMenu(node.dataset.node,event.clientX,event.clientY);else openNodeMenu(event.clientX,event.clientY);
 });
 $('viewport').addEventListener('dblclick',event=>{if(!event.target.closest('.node,[data-edge]'))openNodeMenu(event.clientX,event.clientY);});
-function removeEdge(event){const edge=event.target.closest('[data-edge]');if(edge&&editable()&&confirm('이 노드 연결을 해제할까요?')){project.edges=project.edges.filter(e=>e.id!==edge.dataset.edge);changed();}}
+function removeEdge(event){const edge=event.target.closest('[data-edge]');if(edge&&(()=>{const e=project.edges.find(e=>e.id===edge.dataset.edge);return e&&editable(e.from)&&editable(e.to);})()&&confirm('이 노드 연결을 해제할까요?')){project.edges=project.edges.filter(e=>e.id!==edge.dataset.edge);changed();}}
 $('edges').onclick=removeEdge;$('edges').onkeydown=event=>{if(['Enter',' '].includes(event.key)){event.preventDefault();removeEdge(event);}};
 $('viewport').addEventListener('wheel',event=>{
   if(event.target.closest('textarea,select'))return;
@@ -457,19 +487,41 @@ $('templates-open').onclick=()=>{
   const rect=$('templates-open').getBoundingClientRect();$('template-menu').hidden=false;
   const pos=menuPosition({x:rect.left,y:rect.bottom+8},{width:innerWidth,height:innerHeight},$('template-menu').getBoundingClientRect());$('template-menu').style.left=pos.x+'px';$('template-menu').style.top=pos.y+'px';$('template-basic').focus();
 };
-document.addEventListener('pointerdown',event=>{const active=document.activeElement;if(active?.matches('input,textarea,select,[contenteditable="true"]')&&active!==event.target&&!active.contains(event.target))active.blur();},true);
+document.addEventListener('pointerdown',event=>{const active=document.activeElement;if(active?.matches('input,textarea,select,[contenteditable="true"],.node-tools button,.node button[data-action="download"]')&&active!==event.target&&!active.contains(event.target))active.blur();},true);
 document.addEventListener('pointerdown',event=>{if(!event.target.closest('#node-menu,#action-menu,#template-menu,#add-node,#templates-open,.port'))closeMenus();});
 $('zoom-in').onclick=()=>zoom(1.15);$('zoom-out').onclick=()=>zoom(1/1.15);$('zoom-reset').onclick=()=>zoom(1/view.scale);$('fit-view').onclick=fitView;
 $('project-name').oninput=event=>{if(!editable()){event.target.value=project.name;return;}project.name=event.target.value;checkpoint('project-name');scheduleSave();};
 $('export-project').onclick=exportProject;
 $('open-project').onclick=()=>{if(editable()){$('project-file').value='';$('project-file').click();}};
 $('project-file').onchange=async event=>{const file=event.target.files[0];if(!file)return;try{if(file.size>MAX_PROJECT_BYTES)throw new Error('프로젝트 JSON은 200MB까지 열 수 있습니다.');await library.importProject(restoreProject(await file.text()));}catch(error){notify(error.message,true);}};
-$('image-file').onchange=async event=>{
-  const file=event.target.files[0],id=uploadTarget,ticket={projectId:activeSpaceId,session:projectSession,nodeId:uploadTarget};if(!file||!editable())return;
-  if(file.size>8_000_000)return notify('이미지는 8MB 이하로 불러오세요.',true);
-  if(!['image/png','image/jpeg','image/webp'].includes(file.type))return notify('PNG/JPG/WebP 이미지만 사용할 수 있습니다.',true);
-  try{const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('이미지 읽기 실패'));reader.readAsDataURL(file);});const bitmap=await createImageBitmap(file);bitmap.close();if(!uploadApplies(ticket,{projectId:activeSpaceId,session:projectSession,project}))return notify('프로젝트가 바뀌어 이미지 적용을 중단했습니다. 필요한 프로젝트에서 다시 선택해 주세요.');const node=project.nodes.find(n=>n.id===id);if(!node)return;node.data.image=data;selected=id;changed();notify('이미지를 불러왔습니다.');}catch{notify('이미지를 읽지 못했습니다. 실제 이미지 파일인지 확인하세요.',true);}
-};
+let imageImportBusy=false;
+async function importImageFiles(files,{targetId=null,point={x:100,y:100}}={}){
+ if(!activeSpaceId||document.body.classList.contains('show-library'))return notify('프로젝트를 연 뒤 캔버스에 이미지 파일을 놓으세요.');
+ if(imageImportBusy)return notify('이미지를 불러오는 중입니다. 잠시 기다려 주세요.');if(!files.length)return;
+ if(targetId&&files.length!==1)return notify('이미지 교체는 한 장만 놓으세요. 여러 이미지는 빈 캔버스에 놓으세요.',true);
+ if(targetId&&!editable(targetId))return;
+ if(!targetId&&project.nodes.length+files.length>MAX_NODE_COUNT)return notify('노드는 프로젝트당 150개까지 추가할 수 있습니다.',true);
+ if(files.some(file=>file.size>8_000_000))return notify('이미지는 파일당 8MB 이하로 불러오세요.',true);
+ if(!targetId&&projectBytes(project)+files.reduce((sum,file)=>sum+Math.ceil(file.size/3)*4+500,0)>MAX_PROJECT_BYTES)return notify('이미지를 추가하면 프로젝트의 200MB 한도를 넘습니다. 이미지 수나 용량을 줄여 주세요.',true);
+ const ticket={id:activeSpaceId,session:projectSession};imageImportBusy=true;$('viewport').setAttribute('aria-busy','true');
+ try{const items=[];for(const file of files)items.push(await readImageFile(file));
+ if(activeSpaceId!==ticket.id||projectSession!==ticket.session)return notify('프로젝트가 바뀌어 이미지 추가를 중단했습니다. 현재 프로젝트에 다시 놓으세요.');
+ if(targetId&&!editable(targetId))return;
+ const candidate={...project,nodeCounters:{...project.nodeCounters},nodes:project.nodes.map(n=>({...n,data:{...n.data}})),edges:project.edges.map(e=>({...e}))},added=[];
+ if(targetId){const node=candidate.nodes.find(n=>n.id===targetId&&n.type==='image');if(!node)return notify('이미지 업로드 노드에만 교체할 수 있습니다.',true);node.data.image=items[0].image;node.data.label=items[0].label;added.push(node.id);}
+ else{const positions=imageGrid(items,point,NODE_WIDTH);for(let i=0;i<items.length;i++){const node={id:uuid(),type:'image',...positions[i],data:{image:items[i].image,label:items[i].label,text:'',ratio:'1:1'}};assignNodeNumber(candidate,node);candidate.nodes.push(node);added.push(node.id);}}
+ project=normalizeProject(candidate);ensureNodeNumbers(project);suppressClickUntil=0;selectedIds.clear();added.forEach(id=>selectedIds.add(id));selected=added.at(-1)||null;changed();notify(targetId?'이미지를 바꿨습니다. 노드 번호와 연결은 유지됩니다.':`${items.length}개 이미지 노드를 추가했습니다. 원본 해상도는 유지됩니다.`);
+ }catch(error){notify(error.message,true);}finally{imageImportBusy=false;$('viewport').removeAttribute('aria-busy');}
+}
+$('image-file').onchange=event=>{const file=event.target.files[0];if(file)void importImageFiles([file],{targetId:uploadTarget});};
+const fileDrag=event=>Array.from(event.dataTransfer?.types||[]).includes('Files');
+function clearDropHint(){$('viewport').classList.remove('file-drop-active');document.querySelectorAll('.image-drop-target').forEach(el=>el.classList.remove('image-drop-target'));}
+window.addEventListener('dragover',event=>{if(fileDrag(event))event.preventDefault();});
+window.addEventListener('drop',event=>{if(fileDrag(event)){event.preventDefault();clearDropHint();if(!event.target.closest('#viewport'))notify('프로젝트의 캔버스 안에 이미지 파일을 놓으세요.');}});
+$('viewport').addEventListener('dragover',event=>{if(!fileDrag(event))return;event.preventDefault();event.dataTransfer.dropEffect='copy';clearDropHint();$('viewport').classList.add('file-drop-active');const el=event.target.closest('[data-node]');if(project.nodes.find(n=>n.id===el?.dataset.node)?.type==='image')el.classList.add('image-drop-target');});
+$('viewport').addEventListener('dragleave',event=>{if(!event.relatedTarget||!$('viewport').contains(event.relatedTarget))clearDropHint();});
+$('viewport').addEventListener('drop',event=>{if(!fileDrag(event))return;event.preventDefault();clearDropHint();const el=event.target.closest('[data-node]'),node=project.nodes.find(n=>n.id===el?.dataset.node);if(node&&node.type!=='image')return notify('빈 캔버스 또는 이미지 업로드 노드에 놓으세요. 생성·편집 결과는 교체하지 않습니다.');const point=screenToWorld({x:event.clientX,y:event.clientY},$('viewport').getBoundingClientRect(),view);void importImageFiles(Array.from(event.dataTransfer.files),{targetId:node?.id,point});});
+window.addEventListener('blur',clearDropHint);window.addEventListener('dragend',clearDropHint);
 $('template-basic').onclick=()=>replaceProject(starterProject());
 $('template-edit').onclick=()=>replaceProject(editProject());
 $('help-open').onclick=()=>$('help-dialog').showModal();
@@ -491,25 +543,27 @@ $('login-button').onclick=async()=>{
 };
 $('logout-button').onclick=async()=>{if(!confirm('NodeCanvas 앱 전용 ChatGPT 계정에서 로그아웃할까요?'))return;try{await api('logout');bridge.account=null;renderConnection();connectionMessage('앱 전용 계정에서 로그아웃했습니다.');}catch(error){connectionMessage(error.message,true);}};
 $('run-all').onclick=()=>runWorkflow();
-$('cancel-run').onclick=async()=>{cancelled=true;$('cancel-run').disabled=true;try{if(activeJob)await api('cancel',{id:activeJob});}catch(error){notify(error.message,true);}finally{$('cancel-run').disabled=false;}};
+$('cancel-run').onclick=()=>{if(taskQueue.active)void taskQueue.cancel(taskQueue.active.id).catch(error=>notify(error.message,true));};
 $('history-toggle').onclick=()=>{$('history-list').hidden=!$('history-list').hidden;};
 document.addEventListener('keydown',event=>{
   if(isImeKey(event))return;
   if(document.body.classList.contains('show-library'))return;
   if((event.ctrlKey||event.metaKey)&&['z','y'].includes(event.key.toLowerCase())&&!event.target.closest('input,textarea,select')&&!document.querySelector('dialog[open]')){event.preventDefault();undoEdit(event.shiftKey||event.key.toLowerCase()==='y');return;}
-  if(event.key==='Escape'){cancelWire();closeMenus();$('canvas-hint').textContent='우클릭으로 추가 · 포트를 끌어 연결 · 노드 안에서 바로 입력';return;}
+  if(event.key==='Escape'){clearDropHint();select(null);cancelWire();closeMenus();finishTemporaryPan();$('canvas-hint').textContent='드래그로 다중 선택 · Ctrl+클릭으로 추가 선택 · Space+드래그로 화면 이동';return;}
   if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();exportProject();}
   if(['INPUT','TEXTAREA','SELECT'].includes(event.target.tagName)||document.querySelector('dialog[open]'))return;
   if(event.key.toLowerCase()==='v')setTool('select');
   if(event.key.toLowerCase()==='h')setTool('pan');
   if(event.key==='Delete'&&selected)deleteNode(selected);
-  if(event.code==='Space'&&!event.target.closest('button,#node-menu,#action-menu,#template-menu')){event.preventDefault();const rect=$('viewport').getBoundingClientRect();openNodeMenu(rect.left+rect.width/2,rect.top+150);}
+  if(event.code==='Space'&&!event.target.closest('button,#node-menu,#action-menu,#template-menu,[contenteditable]')){event.preventDefault();spaceHeld=true;$('viewport').classList.add('pan-mode');}
   if(event.key==='ContextMenu'||(event.shiftKey&&event.key==='F10')){event.preventDefault();const rect=$('viewport').getBoundingClientRect();openNodeMenu(rect.left+rect.width/2,rect.top+150);}
 });
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)void heartbeat();});
+document.addEventListener('keyup',event=>{if(event.code==='Space')finishTemporaryPan();});
+window.addEventListener('blur',()=>{finishTemporaryPan();if(drag?.kind==='node'&&drag.moved){checkpoint();scheduleSave();}cancelWire();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){finishTemporaryPan();hideMarquee();}else void heartbeat();});
 window.addEventListener('resize',()=>closeMenus());
 renderAll();historyRender();readableView();
-try{library=await initializeLibrary({beforeLeave:leaveProject,afterTransition:()=>{document.querySelector('.app-header').inert=false;document.querySelector('.workspace').inert=false;},openProject:enterProject,onLibrary:releaseProject,backupProject:exportProjectRecord,notify});}catch(error){notify(error.message,true);$('spaces-grid').setAttribute('aria-busy','false');$('spaces-grid').textContent='프로젝트를 불러오지 못했습니다. 저장소 권한을 확인하고 새로고침해 주세요.';$('new-space').disabled=true;}
+try{library=await initializeLibrary({beforeLeave:leaveProject,afterTransition:endTransition,canRemoveProject:id=>!taskQueue.hasProject(id),openProject:enterProject,onLibrary:releaseProject,backupProject:exportProjectRecord,notify});}catch(error){notify(error.message,true);$('spaces-grid').setAttribute('aria-busy','false');$('spaces-grid').textContent='프로젝트를 불러오지 못했습니다. 저장소 권한을 확인하고 새로고침해 주세요.';$('new-space').disabled=true;}
 $('spaces-home').onclick=()=>void library?.show().catch(error=>notify(error.message,true));
 for(const brand of document.querySelectorAll('.brand'))brand.onclick=event=>{event.preventDefault();void library?.show().catch(error=>notify(error.message,true));};
 $('import-space').onclick=()=>{$('project-file').value='';$('project-file').click();};
