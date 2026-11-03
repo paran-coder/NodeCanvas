@@ -20,7 +20,7 @@ export function isImage(value) {
 export function outputKind(type){return TYPES[type]?.output==='text'?'prompt':TYPES[type]?.output;}
 export function canConnect(source,target,inputKind=null){
  if(!source||!target||!Object.hasOwn(TYPES,source.type)||!Object.hasOwn(TYPES,target.type)||source.id===target.id||source.type==='color')return false;
- if(target.type==='color')return source.type==='edit'&&(!inputKind||inputKind==='image');
+ if(target.type==='color')return ['generate','edit'].includes(source.type)&&(!inputKind||inputKind==='image');
  if(!['generate','edit'].includes(target.type))return false;
  if(source.type==='skill'&&getSkill(source.data?.skill)?.mode==='generate'&&target.type!=='generate')return false;
  const kind=outputKind(source.type);if(inputKind&&kind!==inputKind)return false;
@@ -48,7 +48,7 @@ export function validateGraph(graph,{checkSize=true}={}) {
     if(typeof e.id!=='string' || !/^[\w-]{1,80}$/.test(e.id) || ids.has(e.id) || pairs.has(pair) || !canConnect(nodes.get(e.from),nodes.get(e.to))) throw new Error('연결할 수 없는 노드 조합입니다.');
     if(nodes.get(e.from).type==='skill'){if(skillTargets.has(e.to)||nodes.get(e.to).data.skill)throw new Error('생성·편집 노드에는 스킬 하나만 연결할 수 있습니다.');skillTargets.add(e.to);}
     if(nodes.get(e.to).type==='color'){
-      if(colorTargets.has(e.to))throw new Error('색감 조정에는 이미지 편집기 한 개만 연결할 수 있습니다.');
+      if(colorTargets.has(e.to))throw new Error('색감 조정에는 이미지 생성기 또는 편집기 한 개만 연결할 수 있습니다.');
       colorTargets.add(e.to);
     }
     ids.add(e.id); pairs.add(pair);

@@ -2,17 +2,19 @@ import {COLOR_CONTROLS, colorSettings, drawColor} from './2026-11-03-color.mjs';
 
 const images = new WeakMap();
 
-export function renderColorPanel(node, source, busy) {
+export function renderColorPanel(node, source, busy, connected) {
   const settings = colorSettings(node.data.color);
   const disabled = !source || busy ? 'disabled' : '';
   return `<div class="color-panel">
+    <div class="color-preview">
     <canvas hidden role="img" aria-label="색감 조정 미리보기"></canvas>
-    <p role="status">${source ? '미리보기 불러오는 중…' : '이미지 편집기의 완성된 출력을 연결하세요.'}</p>
+    <p role="status">${source ? '미리보기 불러오는 중…' : connected ? '연결된 노드의 이미지 결과를 기다리는 중입니다.' : '이미지 생성기 또는 편집기의 출력을 연결하세요.'}</p>
+    </div>
     ${Object.entries(COLOR_CONTROLS).map(([key, label]) => `
       <label><span>${label}</span><output>${settings[key]}</output>
         <input type="range" min="-100" max="100" value="${settings[key]}" data-color="${key}" aria-label="${label}" ${disabled}>
       </label>`).join('')}
-    <div class="node-settings">
+    <div class="color-actions">
       <button type="button" class="button quiet" data-action="color-compare" aria-pressed="false" ${disabled}>원본 비교</button>
       <button type="button" class="button quiet" data-action="color-reset" ${disabled}>초기화</button>
       <button type="button" class="button primary" data-action="color-save" ${disabled}>PNG 저장</button>
@@ -32,7 +34,7 @@ export async function loadColorPanel(panel, source, node) {
     panel.querySelector('[role="status"]').hidden = true;
   } catch {
     images.delete(panel);
-    panel.querySelector('[role="status"]').textContent = '편집 이미지를 읽을 수 없습니다.';
+    panel.querySelector('[role="status"]').textContent = '연결된 이미지를 읽을 수 없습니다.';
     panel.querySelectorAll('input,button').forEach(control => control.disabled = true);
   }
 }

@@ -4,7 +4,7 @@ export const CATALOG=[
  {type:'image',label:'이미지 업로드',category:'image',description:'내 이미지 가져오기',icon:'↥'},
  {type:'generate',label:'이미지 생성기',category:'image',description:'글로 이미지 만들기',icon:'✦'},
  {type:'edit',label:'이미지 편집기',category:'image',description:'이미지 수정하기',icon:'◈'},
- {type:'color',label:'색감 조정',category:'image',description:'편집 이미지의 색감을 로컬에서 보정',icon:'◐'},
+ {type:'color',label:'색감 조정',category:'image',description:'생성·편집 이미지의 색감을 로컬에서 보정',icon:'◐'},
  {type:'prompt',label:'텍스트',category:'text',description:'프롬프트와 메모 입력',icon:'T'},...skillCatalog()
 ];
 export function catalogEntries({category='all',query='',allowed=CATALOG.map(n=>n.type)}={}){const search=query.trim().toLocaleLowerCase('ko-KR');return CATALOG.filter(n=>allowed.includes(n.type)&&(category==='all'||n.category===category)&&(`${n.label} ${n.description} ${n.type}`.toLocaleLowerCase('ko-KR').includes(search)));}
@@ -13,7 +13,7 @@ export function menuEntries(options={}){const entries=catalogEntries(options);if
 export function requiresMedia(type){return ['image','generate','edit','color'].includes(type);}
 
 export const NODE_HELP={
- color:{title:'색감 조정',summary:'이미지 편집기 출력의 밝기, 대비, 채도, 색온도를 브라우저에서 조정합니다.',inputs:'이미지 편집기 출력 한 개',outputs:'PNG 다운로드',example:'이미지 편집 → 색감 조정 → PNG 저장'},
+ color:{title:'색감 조정',summary:'이미지 생성기 또는 편집기 출력의 밝기, 대비, 채도, 색온도를 브라우저에서 조정합니다.',inputs:'이미지 생성기 또는 편집기 출력 한 개',outputs:'PNG 다운로드',example:'이미지 생성 → 색감 조정 → PNG 저장'},
  skill:{title:'스킬 노드',summary:'목록에서 선택한 이미지 제작 지침을 연결된 노드에 전달합니다. 이 노드 자체는 이미지를 생성하지 않습니다.',inputs:'스킬 목록에서 선택한 항목',outputs:'스킬 지침',example:'HairLock 스킬 → 다음 이미지 생성·편집기의 스킬 입력',tip:'이전 결과 이미지는 다음 생성·편집기의 이미지 입력에 연결하세요. 헤어스타일은 다음 노드 안에 적습니다. 선택 실행 시 완성된 이전 결과는 재사용합니다. 스킬 연결을 끊으면 해제됩니다.'},
  prompt:{title:'텍스트 · 프롬프트',summary:'지시문을 재사용하거나 여러 생성·편집 카드에 공유할 때 선택적으로 사용합니다. 기본 생성에는 필요하지 않습니다.',inputs:'직접 입력한 지시문',outputs:'텍스트',example:'텍스트 → 이미지 생성 → 이미지 저장'},
  image:{title:'이미지 업로드',summary:'내 컴퓨터의 이미지를 불러와 생성이나 편집에 사용할 재료로 전달합니다.',inputs:'PNG · JPG · WebP 파일',outputs:'업로드한 이미지',example:'이미지 업로드 → 이미지 편집기에 지시 입력 → 이미지 저장',tip:'카드를 짧게 클릭하면 파일 선택, 누른 채 끌면 노드 이동입니다. 이미지가 있어도 같은 방식으로 바꿀 수 있어요.'},
