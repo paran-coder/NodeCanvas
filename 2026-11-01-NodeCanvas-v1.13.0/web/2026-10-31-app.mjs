@@ -103,7 +103,7 @@ function renderWire(point){
   $('wire-preview').innerHTML=`<path class="wire" d="${d}"/>`;
 }
 function displayedImage(node){return node?(runStates[node.id]?.previewImage||node.data.image):'';}
-function progressMarkup(node){const state=runStates[node.id];if(!['queued','running','cancelling','failed','cancelled'].includes(state?.state))return '';const running=['running','cancelling'].includes(state.state),waiting=state.state==='queued';const label=state.state==='cancelling'?'취소 요청 중':waiting?'생성 대기 중':state.state==='failed'?'생성을 완료하지 못했어요':state.state==='cancelled'?'생성이 취소됐어요':state.phase||'이미지 생성 중';return `<div class="node-progress ${running?'is-running':waiting?'is-waiting':'is-error'}" role="status"><div class="progress-content"><span class="progress-symbol" aria-hidden="true">${running?'':waiting?'◷':'!'}</span><strong class="progress-title">${esc(label)}</strong><span class="progress-detail">${waiting?'앞선 작업이 끝나면 시작합니다':state.state==='failed'?'작업 목록에서 오류를 확인하세요':state.state==='cancelled'?'지시를 확인한 뒤 다시 생성할 수 있어요':'다른 작업을 준비해도 괜찮아요'}</span>${state.startedAt&&running?`<span class="progress-elapsed" aria-live="off" data-start="${state.startedAt}">${Math.floor((Date.now()-state.startedAt)/1000)}초 경과</span>`:''}</div></div>`;}
+function progressMarkup(node){const state=runStates[node.id];if(!['queued','running','cancelling','failed','cancelled'].includes(state?.state))return '';const running=['running','cancelling'].includes(state.state),waiting=state.state==='queued';const label=state.state==='cancelling'?'취소 요청 중':waiting?'생성 대기 중':state.state==='failed'?'생성을 완료하지 못했어요':state.state==='cancelled'?'생성이 취소됐어요':'작업 중';return `<div class="node-progress ${running?'is-running':waiting?'is-waiting':'is-error'}" role="status"><div class="progress-content"><span class="progress-symbol" aria-hidden="true">${running?'':waiting?'◷':'!'}</span><strong class="progress-title">${esc(label)}</strong><span class="progress-detail">${waiting?'앞선 작업이 끝나면 시작합니다':state.state==='failed'?'작업 목록에서 오류를 확인하세요':state.state==='cancelled'?'지시를 확인한 뒤 다시 생성할 수 있어요':'다른 작업을 준비해도 괜찮아요'}</span>${state.startedAt&&running?`<span class="progress-elapsed" aria-live="off" data-start="${state.startedAt}">${Math.floor((Date.now()-state.startedAt)/1000)}초 경과</span>`:''}</div></div>`;}
 function preview(node,kind='generate'){
   const progress=progressMarkup(node);if(progress){const displayImage=runStates[node.id]?.previewImage||node.data.image;const image=isImage(displayImage)?`<img class="node-preview" src="${displayImage}" alt="${runStates[node.id]?.previewImage?'수신한 생성 이미지':'이전 생성 이미지'}" draggable="false">`:'<div class="image-placeholder media-empty"></div>';return `<div class="node-media-stage ${isImage(displayImage)?'has-image':''}">${image}${progress}</div>`;}
 
@@ -328,7 +328,14 @@ async function executeTask(task,signal){
  }}catch(error){if(current&&task.writeIds.includes(current.id))nodeState(task,current.id,{state:signal.aborted?'cancelled':'failed',previewImage:null});if(task.providerJob){try{await cancelProviderTask(task);}catch{}task.providerJob=null;}throw error;}
 }
 setInterval(()=>{document.querySelectorAll('.progress-elapsed[data-start]').forEach(el=>el.textContent=Math.floor((Date.now()-Number(el.dataset.start))/1000)+'초 경과');},1000);
-$('task-toggle').onclick=()=>{const list=$('task-items');list.hidden=!list.hidden;$('task-toggle').setAttribute('aria-expanded',String(!list.hidden));};
+function setTaskPanelOpen(open){
+  $('task-items').hidden=!open;
+  $('task-toggle').setAttribute('aria-expanded',String(open));
+}
+$('task-toggle').onclick=()=>setTaskPanelOpen($('task-items').hidden);
+document.addEventListener('pointerdown',event=>{
+  if(!$('task-items').hidden&&!$('task-dock').contains(event.target))setTaskPanelOpen(false);
+},true);
 $('task-items').onclick=event=>{const cancel=event.target.closest('[data-task-cancel]');if(cancel)void taskQueue.cancel(cancel.dataset.taskCancel).catch(error=>notify(error.message,true));const download=event.target.closest('[data-task-download]');if(download)downloadImage(taskQueue.items.find(t=>t.id===download.dataset.taskDownload)?.unsavedImage);};
 
 
