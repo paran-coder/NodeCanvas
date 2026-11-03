@@ -502,7 +502,9 @@ $('templates-open').onclick=()=>{
   const rect=$('templates-open').getBoundingClientRect();$('template-menu').hidden=false;
   const pos=menuPosition({x:rect.left,y:rect.bottom+8},{width:innerWidth,height:innerHeight},$('template-menu').getBoundingClientRect());$('template-menu').style.left=pos.x+'px';$('template-menu').style.top=pos.y+'px';$('template-basic').focus();
 };
-document.addEventListener('pointerdown',event=>{const active=document.activeElement;if(active?.matches('input,textarea,select,[contenteditable="true"],.node-tools button,.node button[data-action="download"]')&&active!==event.target&&!active.contains(event.target))active.blur();},true);
+document.addEventListener('pointerdown',event=>{const active=document.activeElement;if(active?.matches('input,textarea,select,[contenteditable="true"],.node-tools button,.node button[data-action="download"]')&&active!==event.target&&!active.contains(event.target))active.blur();
+ else if(event.pointerType==='mouse'&&event.button===0&&active?.matches('button[data-action="help"]')&&!active.closest('[data-node]')?.contains(event.target))active.blur();
+},true);
 document.addEventListener('pointerdown',event=>{if(!event.target.closest('#node-menu,#action-menu,#template-menu,#add-node,#templates-open,.port'))closeMenus();});
 $('zoom-in').onclick=()=>zoom(1.15);$('zoom-out').onclick=()=>zoom(1/1.15);$('zoom-reset').onclick=()=>zoom(1/view.scale);$('fit-view').onclick=fitView;
 $('project-name').oninput=event=>{if(!editable()){event.target.value=project.name;return;}project.name=event.target.value;checkpoint('project-name');scheduleSave();};
