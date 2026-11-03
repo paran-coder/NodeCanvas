@@ -572,7 +572,7 @@ document.addEventListener('keydown',event=>{
   if(event.key==='Delete'&&selected)deleteNode(selected);
   if(event.code==='Space'&&!event.target.closest('#node-menu,#action-menu,#template-menu,[contenteditable],dialog')){
     spaceHeld=true;$('viewport').classList.add('pan-mode');
-    if(!event.target.closest('button'))event.preventDefault();
+    if(!event.target.closest('button')||event.target.closest('button[data-action="help"]'))event.preventDefault();
   }
   if(event.key==='ContextMenu'||(event.shiftKey&&event.key==='F10')){event.preventDefault();const rect=$('viewport').getBoundingClientRect();openNodeMenu(rect.left+rect.width/2,rect.top+150);}
 });
