@@ -1,4 +1,4 @@
-import {bindMentionPrompt,moveMentions} from './2026-11-03-image-mentions.mjs';
+import {bindMentionPrompt,moveMentions,cleanMentions} from './2026-11-03-image-mentions.mjs';
 import {colorSettings} from './2026-11-03-color.mjs';
 import {renderColorPanel, loadColorPanel, refreshColorPanel, colorPng} from './2026-11-03-color-panel.mjs';
 import {ensureNodeNumbers,assignNodeNumber,nodeLabel,mergeNodeCounters} from './2026-11-01-node-numbers.mjs';
@@ -120,7 +120,7 @@ function hasSkill(node){return project.edges.some(e=>e.to===node.id&&project.nod
 function skillStatus(node){const source=project.edges.filter(e=>e.to===node.id).map(e=>project.nodes.find(n=>n.id===e.from)).find(n=>n?.type==='skill');const skill=getSkill(source?.data.skill);return skill?`<div class="skill-connected">${nodeIcon('skill')}<span>${esc(skill.name)} 연결됨</span></div>`:'';}
 function refreshPromptGuidance(){for(const node of project.nodes.filter(n=>['generate','edit'].includes(n.type))){const el=document.querySelector(`[data-node="${node.id}"]`);if(!el)continue;const info=promptPresentation(project,node),input=el.querySelector('textarea');el.querySelector('.prompt-sources').innerHTML=promptSources(info);el.querySelector('.inline-prompt .field-label').textContent=info.label;input.placeholder=hasSkill(node)?skillHint(node):info.placeholder;input.setAttribute('aria-label',TYPES[node.type].label+' '+info.label);}}
 const mediaObserver=new ResizeObserver(entries=>{for(const entry of entries){const el=entry.target.closest('[data-node]');if(!el)continue;const node=project.nodes.find(n=>n.id===el.dataset.node);if(!node)continue;const inputs=portsFor(node.type).filter(p=>p.direction==='input'),center=Math.max(inputs.length===3?48:0,entry.target.offsetHeight/2),spread=32;for(const port of el.querySelectorAll('.port')){const index=inputs.findIndex(p=>p.kind===port.dataset.inputKind),offset=inputs.length===3?(index-1)*spread:port.dataset.inputKind==='prompt'?-spread:spread;port.style.setProperty('--port-y',(port.classList.contains('input')?center+offset:center)+'px');}}renderEdges();});
-function observeMedia(){mediaObserver.disconnect();document.querySelectorAll('.node-content > .node-preview,.node-media-stage,.upload-surface').forEach(el=>mediaObserver.observe(el));}
+function observeMedia(){refreshMentionHighlights();mediaObserver.disconnect();document.querySelectorAll('.node-content > .node-preview,.node-media-stage,.upload-surface').forEach(el=>mediaObserver.observe(el));}
 function renderPorts(node){return portsFor(node.type).map(port=>`<button type="button" class="port ${port.direction} port-${port.kind}" style="--port-y:${portOffset(node.type,port.direction,port.kind)}px" data-${port.direction}="${esc(node.id)}" data-input-kind="${port.kind}" aria-label="${esc(TYPES[node.type].label)} ${port.label} ${port.direction==='input'?'입력':'출력'} 연결" title="${port.label} · ${port.description}"><span class="port-icon" aria-hidden="true">${portIcon(port.kind)}</span><span class="port-caption" aria-hidden="true">${port.label}</span><span class="port-description" aria-hidden="true">${port.description}</span></button>`).join('');}
 function renderNodeTools(node){const type=TYPES[node.type];return `<div class="node-tools" role="group" aria-label="${esc(type.label)} 빠른 도구">${type.output==='image'?`<button type="button" data-action="download" aria-label="${esc(type.label)} 이미지 저장" title="이미지 저장 · AI를 다시 실행하지 않습니다" ${!isImage(displayedImage(node))?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg><span class="tool-tip">이미지 저장</span></button>`:''}<button type="button" data-action="duplicate" aria-label="${esc(type.label)} 노드 복제" title="노드 복제" ${nodeLocked(node.id)?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg><span class="tool-tip">복제</span></button><button type="button" data-action="delete" aria-label="${esc(type.label)} 노드 삭제" title="노드 삭제" ${nodeLocked(node.id)?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></svg><span class="tool-tip">삭제</span></button></div>`;}
 function colorSource(node) {
@@ -403,6 +403,71 @@ $('viewport').addEventListener('pointerup',event=>{
   resetHighlight();
 });
 $('viewport').addEventListener('pointercancel',()=>{if(drag?.kind==='node'&&drag.moved){checkpoint();scheduleSave();}cancelWire();});
+const mentionMirrors=new WeakMap();
+function refreshMentionHighlights(onlyInput){
+  const inputs=onlyInput?[onlyInput]:document.querySelectorAll('.inline-prompt textarea[data-field="text"]');
+  for(const input of inputs){
+    const node=project.nodes.find(node=>node.id===input.closest('[data-node]')?.dataset.node);
+    if(!node)continue;
+    const mentions=cleanMentions(node.data.mentions,input.value);
+    let view=mentionMirrors.get(input);
+    if(!mentions.length){
+      if(view){view.mirror.hidden=true;view.warning.hidden=true;input.style.color='';input.style.caretColor='';}
+      continue;
+    }
+    if(!view){
+      const wrapper=document.createElement('div');
+      wrapper.style.position='relative';
+      input.before(wrapper);
+      wrapper.append(input);
+      const mirror=document.createElement('div');
+      mirror.setAttribute('aria-hidden','true');
+      Object.assign(mirror.style,{position:'absolute',pointerEvents:'none',overflow:'hidden',whiteSpace:'pre-wrap',overflowWrap:'break-word'});
+      wrapper.append(mirror);
+      const warning=document.createElement('small');
+      warning.textContent='연결 또는 이미지 결과를 확인할 @참조가 있습니다.';
+      warning.style.color='#a32923';
+      wrapper.after(warning);
+      const sync=()=>{
+        mirror.style.width=input.clientWidth+'px';
+        mirror.style.height=input.clientHeight+'px';
+        mirror.scrollTop=input.scrollTop;
+        mirror.scrollLeft=input.scrollLeft;
+      };
+      input.addEventListener('scroll',sync);
+      view={mirror,warning,sync};
+      mentionMirrors.set(input,view);
+      mentionResizeObserver.observe(input);
+    }
+    const {mirror,warning,sync}=view;
+    const style=getComputedStyle(input);
+    const ink=input.style.color==='transparent'?mirror.style.color:style.color;
+    Object.assign(mirror.style,{left:input.offsetLeft+input.clientLeft+'px',top:input.offsetTop+input.clientTop+'px',
+      boxSizing:'border-box',padding:style.padding,font:style.font,lineHeight:style.lineHeight,
+      letterSpacing:style.letterSpacing,textAlign:style.textAlign,color:ink,tabSize:style.tabSize});
+    let end=0,missing=false;
+    mirror.replaceChildren();
+    for(const {start,token,sourceId} of mentions){
+      const source=project.nodes.find(source=>source.id===sourceId);
+      const connected=isImage(source?.data.image)&&project.edges.some(edge=>edge.from===sourceId&&edge.to===node.id);
+      missing||=!connected;
+      const span=document.createElement('span');
+      span.textContent=token;
+      span.style.color=connected?'#2452c6':'#a32923';
+      mirror.append(input.value.slice(end,start),span);
+      end=start+token.length;
+    }
+    mirror.append(input.value.slice(end)+'\u200b');
+    mirror.hidden=false;
+    warning.hidden=!missing;
+    input.style.caretColor=ink;
+    input.style.color='transparent';
+    sync();
+  }
+}
+const mentionResizeObserver=new ResizeObserver(entries=>{
+  for(const {target} of entries)mentionMirrors.get(target)?.sync();
+});
 let mentionMenu=null;
 function closeMentionMenu(){
   mentionMenu?.element.remove();
@@ -492,6 +557,7 @@ $('nodes').addEventListener('input',event=>{
   }
   node.data[input.dataset.field]=input.value;if(input.dataset.field==='label')input.style.width=Math.min(230,Math.max(30,[...input.value].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))+'px';delete runStates[node.id];
   if(input.matches('textarea[data-field="text"]')&&!event.isComposing)showMentionMenu(input);
+  if(input.matches('.inline-prompt textarea[data-field="text"]'))refreshMentionHighlights(input);
   const count=input.closest('.node').querySelector('[data-char-count]');if(count)count.textContent=(node.data.text||'').length+'자';
   refreshPromptGuidance();
   checkpoint('field:'+node.id+':'+input.dataset.field);scheduleSave();
