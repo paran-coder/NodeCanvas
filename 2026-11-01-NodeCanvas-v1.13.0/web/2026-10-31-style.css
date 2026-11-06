@@ -131,6 +131,12 @@ body:not(.show-library){height:100dvh;display:flex;flex-direction:column}body:no
 
 /* Keep the image card's footprint fixed while showing prompt controls. */
 .prompt-card-media{position:relative;isolation:isolate;overflow:hidden;border-radius:12px}
+.prompt-card-media{--empty-image-ratio:1 / 1}
+.prompt-card-media[data-ratio="3:2"]{--empty-image-ratio:3 / 2}
+.prompt-card-media[data-ratio="2:3"]{--empty-image-ratio:2 / 3}
+.prompt-card-media[data-ratio="16:9"]{--empty-image-ratio:16 / 9}
+.prompt-card-media[data-ratio="9:16"]{--empty-image-ratio:9 / 16}
+.node .prompt-card-media .media-empty{height:auto;aspect-ratio:var(--empty-image-ratio)}
 .node .prompt-card-media>.node-preview,.node .prompt-card-media>.media-empty,
 .node .prompt-card-media .node-media-stage{border-radius:12px}
 .card-prompt-overlay{position:absolute;inset:auto 0 0;z-index:1;padding:12px 6px 5px;color:#fff;

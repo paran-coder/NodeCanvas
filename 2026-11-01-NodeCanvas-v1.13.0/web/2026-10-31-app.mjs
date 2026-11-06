@@ -17,7 +17,7 @@ import {EditHistory} from './2026-10-31-history.mjs';
 import {getSpace,saveProject} from './2026-10-31-storage.mjs';
 import {settleEdits} from './2026-10-31-spaces.mjs';
 import {initializeLibrary} from './2026-10-31-library.mjs';
-import {NODE_WIDTH,nodeDragAllowed,uploadClick,PORT_Y,portsFor,portOffset,screenToWorld,curvePath,makeConnection,compatibleTypes,menuPosition,isImeKey} from './2026-10-31-canvas.mjs';
+import {IMAGE_NODE_WIDTH,nodeWidth,nodeDragAllowed,uploadClick,PORT_Y,portsFor,portOffset,screenToWorld,curvePath,makeConnection,compatibleTypes,menuPosition,isImeKey} from './2026-10-31-canvas.mjs';
 
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -74,7 +74,7 @@ function updateView(){
 function fitView(){
   if(!project.nodes.length){view={x:0,y:0,scale:1};return updateView();}
   const minX=Math.min(...project.nodes.map(n=>n.x)),minY=Math.min(...project.nodes.map(n=>n.y));
-  const maxX=Math.max(...project.nodes.map(n=>n.x+NODE_WIDTH));
+  const maxX=Math.max(...project.nodes.map(n=>n.x+nodeWidth(n.type)));
   const maxY=Math.max(...project.nodes.map(n=>n.y+(document.querySelector(`[data-node="${n.id}"]`)?.offsetHeight||400)));
   const bounds=$('viewport').getBoundingClientRect();
   const scale=Math.max(.2,Math.min(1,(bounds.width-100)/(maxX-minX),(bounds.height-170)/(maxY-minY)));
@@ -88,7 +88,7 @@ function zoom(amount,clientX,clientY){
   const rect=$('viewport').getBoundingClientRect(),x=clientX??rect.width/2,y=clientY??rect.height/2;
   const scale=Math.min(2,Math.max(.2,view.scale*amount));view.x=x-(x-view.x)*scale/view.scale;view.y=y-(y-view.y)*scale/view.scale;view.scale=scale;updateView();
 }
-function portPoint(id,direction,kind){const n=project.nodes.find(n=>n.id===id);return {x:n.x+(direction==='output'?NODE_WIDTH:0),y:n.y+(Number.parseFloat(document.querySelector(`[data-node="${id}"] .port.${direction}${kind?'.port-'+kind:''}`)?.style.getPropertyValue('--port-y'))||portOffset(n.type,direction,kind))};}
+function portPoint(id,direction,kind){const n=project.nodes.find(n=>n.id===id);return {x:n.x+(direction==='output'?nodeWidth(n.type):0),y:n.y+(Number.parseFloat(document.querySelector(`[data-node="${id}"] .port.${direction}${kind?'.port-'+kind:''}`)?.style.getPropertyValue('--port-y'))||portOffset(n.type,direction,kind))};}
 function renderEdges(){
   $('edges').innerHTML=project.edges.map(edge=>{
     const source=project.nodes.find(n=>n.id===edge.from),target=project.nodes.find(n=>n.id===edge.to);if(!source||!target)return '';
@@ -132,10 +132,10 @@ function renderNodeMarkup(n,index=0){
     if(n.type==='skill')content=`<div class="skill-card-body"><p>${esc(getSkill(n.data.skill)?.description||'선택한 이미지 제작 지침')}</p></div>`;
     if(n.type==='prompt')content=`${field(n,'프롬프트')}<div class="text-footer"><span data-char-count>${(n.data.text||'').length}자</span><span>텍스트</span></div>`;
     if(n.type==='image')content=preview(n,'image')+(n.data.image?'<div class="node-settings"><button class="button quiet" data-action="upload">이미지 바꾸기</button><button class="button quiet" data-action="download">저장 ↗</button></div>':'');
-    if(['generate','edit'].includes(n.type))content=`<div class="prompt-card-media">${preview(n,n.type==='generate'?'generate':'edit')}<div class="card-prompt-overlay">${field(n,n.type==='edit'?'편집 지시':'프롬프트',true)}<div class="node-settings"><label class="ratio-control"><span class="field-label">비율</span><select data-field="ratio" aria-label="${esc(type.label)} 이미지 비율" ${nodeLocked(n.id)||Boolean(nodeSkill(n)?.ratio)?'disabled':''} title="${nodeSkill(n)?.ratio?'선택한 스킬의 가로형 비율을 사용합니다.':'이미지 비율'}">${['1:1','3:2','2:3','16:9','9:16'].map(r=>`<option ${r===nodeRatio(n)?'selected':''}>${r}</option>`).join('')}</select></label><button class="button primary node-run" type="button" aria-label="${n.type==='edit'?'편집하기':'생성하기'}" title="${n.type==='edit'?'편집하기':'생성하기'}" data-run="${esc(n.id)}" ${nodeLocked(n.id)?'disabled':''}><span aria-hidden="true">↗</span></button></div></div></div>`;
+    if(['generate','edit'].includes(n.type))content=`<div class="prompt-card-media" data-ratio="${esc(nodeRatio(n))}">${preview(n,n.type==='generate'?'generate':'edit')}<div class="card-prompt-overlay">${field(n,n.type==='edit'?'편집 지시':'프롬프트',true)}<div class="node-settings"><label class="ratio-control"><span class="field-label">비율</span><select data-field="ratio" aria-label="${esc(type.label)} 이미지 비율" ${nodeLocked(n.id)||Boolean(nodeSkill(n)?.ratio)?'disabled':''} title="${nodeSkill(n)?.ratio?'선택한 스킬의 가로형 비율을 사용합니다.':'이미지 비율'}">${['1:1','3:2','2:3','16:9','9:16'].map(r=>`<option ${r===nodeRatio(n)?'selected':''}>${r}</option>`).join('')}</select></label><button class="button primary node-run" type="button" aria-label="${n.type==='edit'?'편집하기':'생성하기'}" title="${n.type==='edit'?'편집하기':'생성하기'}" data-run="${esc(n.id)}" ${nodeLocked(n.id)?'disabled':''}><span aria-hidden="true">↗</span></button></div></div></div>`;
     if(n.type==='color')content=renderColorPanel(n,colorSource(n),nodeLocked(n.id),project.edges.some(edge=>edge.to===n.id));
     const status=state?.state==='queued'?'대기 중':state?.state==='cancelling'?'취소 중':state?.state==='running'?'생성 중':state?.state==='completed'?'완료':state?.state==='reused'?'기존 결과 사용':state?.state==='failed'?'확인 필요':'';
-    return `<article class="node ${media?'media-node':n.type==='skill'?'text-node skill-node':'text-node'} ${selectedIds.has(n.id)?'selected':''} ${state?.state==='failed'?'error-node':''}" style="left:${n.x}px;top:${n.y}px;--node-tint:${tints[n.type]};--port-color:${n.type==='skill'?'#a36b26':type.output==='text'?'#4262ff':'#79609e'}" data-node="${esc(n.id)}" aria-label="${esc(nodeLabel(n,type.label))} 노드"><div class="node-header" data-drag="${esc(n.id)}"><span class="node-icon" title="이 영역을 끌어 노드 이동">${nodeIcon(n.type)}</span><span class="node-name"><input class="node-label" style="width:${Math.min(230,Math.max(30,[...(n.data.label||type.label)].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))}px" data-field="label" aria-label="${esc(type.label)} 노드 이름" value="${esc(n.data.label||type.label)}" maxlength="80" ${nodeLocked(n.id)?'disabled':''}><span class="node-sequence" aria-label="노드 번호 ${n.data.sequence}">#${n.data.sequence}</span></span><span class="node-state ${esc(state?.state||'')}">${esc(status)}</span>${renderNodeTools(n)}<button class="node-help" data-action="help" aria-label="${esc(type.label)} 사용 방법" title="${esc(type.label)} 사용 방법">?</button></div>${renderPorts(n)}<div class="node-content">${content}</div></article>`;
+    return `<article class="node ${media?'media-node':n.type==='skill'?'text-node skill-node':'text-node'} ${selectedIds.has(n.id)?'selected':''} ${state?.state==='failed'?'error-node':''}" style="width:${nodeWidth(n.type)}px;left:${n.x}px;top:${n.y}px;--node-tint:${tints[n.type]};--port-color:${n.type==='skill'?'#a36b26':type.output==='text'?'#4262ff':'#79609e'}" data-node="${esc(n.id)}" aria-label="${esc(nodeLabel(n,type.label))} 노드"><div class="node-header" data-drag="${esc(n.id)}"><span class="node-icon" title="이 영역을 끌어 노드 이동">${nodeIcon(n.type)}</span><span class="node-name"><input class="node-label" style="width:${Math.min(230,Math.max(30,[...(n.data.label||type.label)].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))}px" data-field="label" aria-label="${esc(type.label)} 노드 이름" value="${esc(n.data.label||type.label)}" maxlength="80" ${nodeLocked(n.id)?'disabled':''}><span class="node-sequence" aria-label="노드 번호 ${n.data.sequence}">#${n.data.sequence}</span></span><span class="node-state ${esc(state?.state||'')}">${esc(status)}</span>${renderNodeTools(n)}<button class="node-help" data-action="help" aria-label="${esc(type.label)} 사용 방법" title="${esc(type.label)} 사용 방법">?</button></div>${renderPorts(n)}<div class="node-content">${content}</div></article>`;
 }
 const colorPanelSources=new WeakMap();
 function hydrateColorPanels(){
@@ -570,7 +570,7 @@ $('nodes').addEventListener('input',event=>{
     if(!committed)node.data.mentions=moveMentions(node.data.mentions,node.data.text||'',input.value);
     delete input.dataset.mentionCommit;
   }
-  node.data[input.dataset.field]=input.value;if(input.dataset.field==='label')input.style.width=Math.min(230,Math.max(30,[...input.value].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))+'px';delete runStates[node.id];
+  node.data[input.dataset.field]=input.value;if(input.dataset.field==='ratio')input.closest('.prompt-card-media').dataset.ratio=nodeRatio(node);if(input.dataset.field==='label')input.style.width=Math.min(230,Math.max(30,[...input.value].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))+'px';delete runStates[node.id];
   if(input.matches('textarea[data-field="text"]')&&!event.isComposing)showMentionMenu(input);
   if(input.matches('.inline-prompt textarea[data-field="text"]'))refreshMentionHighlights(input);
   const count=input.closest('.node').querySelector('[data-char-count]');if(count)count.textContent=(node.data.text||'').length+'자';
@@ -591,7 +591,7 @@ $('nodes').addEventListener('click',event=>{
   if(event.target.closest('input,textarea,select'))return;
   if((event.ctrlKey||event.metaKey)&&!event.target.closest('button'))return;
   if(!selectedIds.has(id))select(id);
-  const sourceId=event.target.closest('[data-prompt-source]')?.dataset.promptSource;if(sourceId){const source=project.nodes.find(n=>n.id===sourceId);if(source){select(source.id);const rect=$('viewport').getBoundingClientRect();view.x=rect.width/2-(source.x+NODE_WIDTH/2)*view.scale;view.y=100-source.y*view.scale;updateView();document.querySelector(`[data-node="${source.id}"] textarea`)?.focus({preventScroll:true});}return;}
+  const sourceId=event.target.closest('[data-prompt-source]')?.dataset.promptSource;if(sourceId){const source=project.nodes.find(n=>n.id===sourceId);if(source){select(source.id);const rect=$('viewport').getBoundingClientRect();view.x=rect.width/2-(source.x+nodeWidth(source.type)/2)*view.scale;view.y=100-source.y*view.scale;updateView();document.querySelector(`[data-node="${source.id}"] textarea`)?.focus({preventScroll:true});}return;}
   const action=event.target.closest('[data-action]')?.dataset.action;
   if(action?.startsWith('color-')){
     if(nodeLocked(id))return;
@@ -690,7 +690,7 @@ async function importImageFiles(files,{targetId=null,point={x:100,y:100}}={}){
  if(targetId&&!editable(targetId))return;
  const candidate={...project,nodeCounters:{...project.nodeCounters},nodes:project.nodes.map(n=>({...n,data:{...n.data}})),edges:project.edges.map(e=>({...e}))},added=[];
  if(targetId){const node=candidate.nodes.find(n=>n.id===targetId&&n.type==='image');if(!node)return notify('이미지 업로드 노드에만 교체할 수 있습니다.',true);node.data.image=items[0].image;node.data.label=items[0].label;added.push(node.id);}
- else{const positions=imageGrid(items,point,NODE_WIDTH);for(let i=0;i<items.length;i++){const node={id:uuid(),type:'image',...positions[i],data:{image:items[i].image,label:items[i].label,text:'',ratio:'1:1'}};assignNodeNumber(candidate,node);candidate.nodes.push(node);added.push(node.id);}}
+ else{const positions=imageGrid(items,point,IMAGE_NODE_WIDTH);for(let i=0;i<items.length;i++){const node={id:uuid(),type:'image',...positions[i],data:{image:items[i].image,label:items[i].label,text:'',ratio:'1:1'}};assignNodeNumber(candidate,node);candidate.nodes.push(node);added.push(node.id);}}
  project=normalizeProject(candidate);ensureNodeNumbers(project);suppressClickUntil=0;selectedIds.clear();added.forEach(id=>selectedIds.add(id));selected=added.at(-1)||null;changed();notify(targetId?'이미지를 바꿨습니다. 노드 번호와 연결은 유지됩니다.':`${items.length}개 이미지 노드를 추가했습니다. 원본 해상도는 유지됩니다.`);
  }catch(error){notify(error.message,true);}finally{imageImportBusy=false;$('viewport').removeAttribute('aria-busy');}
 }

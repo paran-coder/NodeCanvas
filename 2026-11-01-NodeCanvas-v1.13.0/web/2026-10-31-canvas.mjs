@@ -1,5 +1,6 @@
 import {TYPES,outputKind,canConnect,validateGraph} from './2026-10-31-graph.mjs';
-export const NODE_WIDTH=380, PORT_Y=160;
+export const NODE_WIDTH=380, IMAGE_NODE_WIDTH=550, PORT_Y=160;
+export function nodeWidth(type){return ['image','generate','edit'].includes(type)?IMAGE_NODE_WIDTH:NODE_WIDTH;}
 export function isImeKey(event){return event.isComposing===true||event.keyCode===229;}
 export function screenToWorld(point,rect,view){return {x:(point.x-rect.left-view.x)/view.scale,y:(point.y-rect.top-view.y)/view.scale};}
 export function curvePath(from,to){const bend=Math.max(70,Math.abs(to.x-from.x)*.5);return `M${from.x},${from.y} C${from.x+bend},${from.y} ${to.x-bend},${to.y} ${to.x},${to.y}`;}
