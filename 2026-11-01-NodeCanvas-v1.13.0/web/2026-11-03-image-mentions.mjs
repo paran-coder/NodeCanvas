@@ -1,3 +1,4 @@
+import {TYPES,isImage} from './2026-10-31-graph.mjs';
 
 export function cleanMentions(value,text=''){
   if(!Array.isArray(value))return [];
@@ -39,4 +40,19 @@ export function bindMentionPrompt(request,node,graph,outputs){
   });
   const lines=[...new Set(bindings.map(([token,index])=>JSON.stringify(token)+' = 이미지 '+index))];
   return {...request,prompt:request.prompt+'\n\n이미지 참조 대응 (첨부 순서):\n'+lines.join('\n')};
+}
+
+export function mentionTitle(node){
+  return (node.data.label||'').trim()||TYPES[node.type].label;
+}
+
+export function mentionCandidates(graph,target,query){
+  const match=query.toLowerCase();
+  return graph.nodes.filter(source=>source.id!==target.id&&TYPES[source.type]?.output==='image'&&
+    isImage(source.data.image)&&mentionTitle(source).toLowerCase().includes(match));
+}
+
+export function exactMention(candidates,query){
+  const exact=candidates.filter(source=>mentionTitle(source).toLowerCase()===query.toLowerCase());
+  return exact.length===1?exact[0]:null;
 }

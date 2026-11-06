@@ -1,0 +1,6 @@
+**/.runtime/
+**/node_modules/
+.vercel/
+2026-10-31-NodeCanvas-v1.0.0-devtools/
+**/2026-10-31-test-output/
+*.log

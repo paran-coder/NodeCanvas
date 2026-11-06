@@ -1,4 +1,4 @@
-import {bindMentionPrompt,moveMentions,cleanMentions} from './2026-11-03-image-mentions.mjs';
+import {bindMentionPrompt,moveMentions,cleanMentions,mentionCandidates,mentionTitle,exactMention} from './2026-11-03-image-mentions.mjs';
 import {colorSettings} from './2026-11-03-color.mjs';
 import {renderColorPanel, loadColorPanel, refreshColorPanel, colorPng} from './2026-11-03-color-panel.mjs';
 import {ensureNodeNumbers,assignNodeNumber,nodeLabel,mergeNodeCounters} from './2026-11-01-node-numbers.mjs';
@@ -112,13 +112,13 @@ function preview(node,kind='generate'){
   return `<div class="image-placeholder media-empty"><span class="placeholder-symbol">✦</span><span>이미지 미리보기</span></div>`;
 }
 function promptSources(info){return info.sources.length?`<div class="prompt-source-status">연결된 텍스트 사용 중${info.sources.map(source=>`<button type="button" data-prompt-source="${esc(source.id)}" title="원본 텍스트 편집">${esc(source.label)}${source.empty?' · 내용 없음':''} ↗</button>`).join('')}</div>`:'';}
-function field(n,label,short=false){const info=short?promptPresentation(project,n):{label,placeholder:'원하는 장면이나 재사용할 지시문을 입력하세요…',sources:[]};return `${short?`<div class="prompt-sources" data-sources-for="${esc(n.id)}">${promptSources(info)}</div>`:''}<label class="node-field ${short?'inline-prompt':''}"><span class="field-label">${esc(info.label)}</span><textarea class="node-text ${short?'short':''}" data-field="text" aria-label="${esc(TYPES[n.type].label)} ${esc(info.label)}" maxlength="16000" ${nodeLocked(n.id)?'disabled':''} placeholder="${esc(hasSkill(n)?skillHint(n):info.placeholder)}">${esc(n.data.text||'')}</textarea></label>`;}
+function field(n,label,short=false){const info=short?promptPresentation(project,n):{label,placeholder:'원하는 장면이나 재사용할 지시문을 입력하세요…',sources:[]};return `${short?`<div class="prompt-sources" data-sources-for="${esc(n.id)}">${promptSources(info)}</div>`:''}<label class="node-field ${short?'inline-prompt':''}">${short?'':`<span class="field-label">${esc(info.label)}</span>`}<textarea class="node-text ${short?'short':''}" data-field="text" aria-label="${esc(TYPES[n.type].label)} ${esc(info.label)}" maxlength="16000" ${nodeLocked(n.id)?'disabled':''} placeholder="${esc(hasSkill(n)?skillHint(n):info.placeholder)}">${esc(n.data.text||'')}</textarea></label>`;}
 function nodeSkill(node){const source=project.edges.filter(e=>e.to===node.id).map(e=>project.nodes.find(n=>n.id===e.from)).find(n=>n?.type==='skill');return getSkill(source?.data.skill);}
 function skillHint(node){return nodeSkill(node)?.promptHint||'예: 얼굴과 배경은 유지하고 앞머리가 있는 단발로 바꿔 주세요…';}
 function nodeRatio(node){return nodeSkill(node)?.ratio||node.data.ratio||'1:1';}
 function hasSkill(node){return project.edges.some(e=>e.to===node.id&&project.nodes.find(n=>n.id===e.from)?.type==='skill');}
 function skillStatus(node){const source=project.edges.filter(e=>e.to===node.id).map(e=>project.nodes.find(n=>n.id===e.from)).find(n=>n?.type==='skill');const skill=getSkill(source?.data.skill);return skill?`<div class="skill-connected">${nodeIcon('skill')}<span>${esc(skill.name)} 연결됨</span></div>`:'';}
-function refreshPromptGuidance(){for(const node of project.nodes.filter(n=>['generate','edit'].includes(n.type))){const el=document.querySelector(`[data-node="${node.id}"]`);if(!el)continue;const info=promptPresentation(project,node),input=el.querySelector('textarea');el.querySelector('.prompt-sources').innerHTML=promptSources(info);el.querySelector('.inline-prompt .field-label').textContent=info.label;input.placeholder=hasSkill(node)?skillHint(node):info.placeholder;input.setAttribute('aria-label',TYPES[node.type].label+' '+info.label);}}
+function refreshPromptGuidance(){for(const node of project.nodes.filter(n=>['generate','edit'].includes(n.type))){const el=document.querySelector(`[data-node="${node.id}"]`);if(!el)continue;const info=promptPresentation(project,node),input=el.querySelector('textarea');el.querySelector('.prompt-sources').innerHTML=promptSources(info);input.placeholder=hasSkill(node)?skillHint(node):info.placeholder;input.setAttribute('aria-label',TYPES[node.type].label+' '+info.label);}}
 const mediaObserver=new ResizeObserver(entries=>{for(const entry of entries){const el=entry.target.closest('[data-node]');if(!el)continue;const node=project.nodes.find(n=>n.id===el.dataset.node);if(!node)continue;const inputs=portsFor(node.type).filter(p=>p.direction==='input'),center=Math.max(inputs.length===3?48:0,entry.target.offsetHeight/2),spread=32;for(const port of el.querySelectorAll('.port')){const index=inputs.findIndex(p=>p.kind===port.dataset.inputKind),offset=inputs.length===3?(index-1)*spread:port.dataset.inputKind==='prompt'?-spread:spread;port.style.setProperty('--port-y',(port.classList.contains('input')?center+offset:center)+'px');}}renderEdges();});
 function observeMedia(){refreshMentionHighlights();mediaObserver.disconnect();document.querySelectorAll('.node-content > .node-preview,.node-media-stage,.upload-surface').forEach(el=>mediaObserver.observe(el));}
 function renderPorts(node){return portsFor(node.type).map(port=>`<button type="button" class="port ${port.direction} port-${port.kind}" style="--port-y:${portOffset(node.type,port.direction,port.kind)}px" data-${port.direction}="${esc(node.id)}" data-input-kind="${port.kind}" aria-label="${esc(TYPES[node.type].label)} ${port.label} ${port.direction==='input'?'입력':'출력'} 연결" title="${port.label} · ${port.description}"><span class="port-icon" aria-hidden="true">${portIcon(port.kind)}</span><span class="port-caption" aria-hidden="true">${port.label}</span><span class="port-description" aria-hidden="true">${port.description}</span></button>`).join('');}
@@ -133,7 +133,7 @@ function renderNodeMarkup(n,index=0){
     if(n.type==='skill')content=`<div class="skill-card-body"><p>${esc(getSkill(n.data.skill)?.description||'선택한 이미지 제작 지침')}</p></div>`;
     if(n.type==='prompt')content=`${field(n,'프롬프트')}<div class="text-footer"><span data-char-count>${(n.data.text||'').length}자</span><span>텍스트</span></div>`;
     if(n.type==='image')content=preview(n,'image')+(n.data.image?'<div class="node-settings"><button class="button quiet" data-action="upload">이미지 바꾸기</button><button class="button quiet" data-action="download">저장 ↗</button></div>':'');
-    if(['generate','edit'].includes(n.type))content=`${preview(n,n.type==='generate'?'generate':'edit')}${skillStatus(n)}${field(n,n.type==='edit'?'편집 지시':'프롬프트',true)}<div class="node-settings"><label class="ratio-control"><span class="field-label">비율</span><select data-field="ratio" aria-label="${esc(type.label)} 이미지 비율" ${nodeLocked(n.id)||Boolean(nodeSkill(n)?.ratio)?'disabled':''} title="${nodeSkill(n)?.ratio?'선택한 스킬의 가로형 비율을 사용합니다.':'이미지 비율'}">${['1:1','3:2','2:3','16:9','9:16'].map(r=>`<option ${r===nodeRatio(n)?'selected':''}>${r}</option>`).join('')}</select></label><button class="button primary node-run" title="이 노드를 새로 실행합니다. 앞쪽에 완성된 이미지는 재사용합니다." data-run="${esc(n.id)}" ${nodeLocked(n.id)?'disabled':''}>${n.type==='edit'?'편집하기':'생성하기'} <span>↗</span></button>${n.data.image?'<button class="icon-button" data-action="download" aria-label="생성 이미지 저장">↓</button>':''}</div>`;
+    if(['generate','edit'].includes(n.type))content=`<div class="prompt-card-media">${preview(n,n.type==='generate'?'generate':'edit')}<div class="card-prompt-overlay">${skillStatus(n)}${field(n,n.type==='edit'?'편집 지시':'프롬프트',true)}<div class="node-settings"><label class="ratio-control"><span class="field-label">비율</span><select data-field="ratio" aria-label="${esc(type.label)} 이미지 비율" ${nodeLocked(n.id)||Boolean(nodeSkill(n)?.ratio)?'disabled':''} title="${nodeSkill(n)?.ratio?'선택한 스킬의 가로형 비율을 사용합니다.':'이미지 비율'}">${['1:1','3:2','2:3','16:9','9:16'].map(r=>`<option ${r===nodeRatio(n)?'selected':''}>${r}</option>`).join('')}</select></label><button class="button primary node-run" title="이 노드를 새로 실행합니다. 앞쪽에 완성된 이미지는 재사용합니다." data-run="${esc(n.id)}" ${nodeLocked(n.id)?'disabled':''}>${n.type==='edit'?'편집하기':'생성하기'} <span>↗</span></button>${n.data.image?'<button class="icon-button" data-action="download" aria-label="생성 이미지 저장">↓</button>':''}</div></div></div>`;
     if(n.type==='color')content=renderColorPanel(n,colorSource(n),nodeLocked(n.id),project.edges.some(edge=>edge.to===n.id));
     const status=state?.state==='queued'?'대기 중':state?.state==='cancelling'?'취소 중':state?.state==='running'?'생성 중':state?.state==='completed'?'완료':state?.state==='reused'?'기존 결과 사용':state?.state==='failed'?'확인 필요':'';
     return `<article class="node ${media?'media-node':n.type==='skill'?'text-node skill-node':'text-node'} ${selectedIds.has(n.id)?'selected':''} ${state?.state==='failed'?'error-node':''}" style="left:${n.x}px;top:${n.y}px;--node-tint:${tints[n.type]};--port-color:${n.type==='skill'?'#a36b26':type.output==='text'?'#4262ff':'#79609e'}" data-node="${esc(n.id)}" aria-label="${esc(nodeLabel(n,type.label))} 노드"><div class="node-header" data-drag="${esc(n.id)}"><span class="node-icon" title="이 영역을 끌어 노드 이동">${nodeIcon(n.type)}</span><span class="node-name"><input class="node-label" style="width:${Math.min(230,Math.max(30,[...(n.data.label||type.label)].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))}px" data-field="label" aria-label="${esc(type.label)} 노드 이름" value="${esc(n.data.label||type.label)}" maxlength="80" ${nodeLocked(n.id)?'disabled':''}><span class="node-sequence" aria-label="노드 번호 ${n.data.sequence}">#${n.data.sequence}</span></span><span class="node-state ${esc(state?.state||'')}">${esc(status)}</span>${renderNodeTools(n)}<button class="node-help" data-action="help" aria-label="${esc(type.label)} 사용 방법" title="${esc(type.label)} 사용 방법">?</button></div>${renderPorts(n)}<div class="node-content">${content}</div></article>`;
@@ -426,7 +426,7 @@ function refreshMentionHighlights(onlyInput){
       wrapper.append(mirror);
       const warning=document.createElement('small');
       warning.textContent='연결 또는 이미지 결과를 확인할 @참조가 있습니다.';
-      warning.style.color='#a32923';
+      warning.className='mention-warning';
       wrapper.after(warning);
       const sync=()=>{
         mirror.style.width=input.clientWidth+'px';
@@ -453,7 +453,7 @@ function refreshMentionHighlights(onlyInput){
       missing||=!connected;
       const span=document.createElement('span');
       span.textContent=token;
-      span.style.color=connected?'#2452c6':'#a32923';
+      span.style.color=connected?'#b7cdff':'#ffd0ca';
       mirror.append(input.value.slice(end,start),span);
       end=start+token.length;
     }
@@ -482,12 +482,37 @@ function showMentionMenu(input){
   if(!match)return;
   const start=caret-match[1].length-1;
   if(node.data.mentions?.some(item=>item.start===start&&input.value.slice(start,caret)===item.token))return;
-  const candidates=project.edges.filter(edge=>edge.to===node.id)
-    .map(edge=>project.nodes.find(source=>source.id===edge.from))
-    .filter(source=>source&&isImage(source.data.image));
+  const candidates=mentionCandidates(project,node,match[1]);
+  const exact=exactMention(candidates,match[1]);
+  const commit=source=>{
+    if(!input.isConnected||nodeLocked(node.id)||nodeLocked(source.id)){closeMentionMenu();return;}
+    const title=mentionTitle(source);
+    const duplicate=candidates.some(item=>item.id!==source.id&&mentionTitle(item).toLowerCase()===title.toLowerCase());
+    const suffix=duplicate?' #'+source.data.sequence:'';
+    const token='@'+title.slice(0,80-suffix.length)+suffix;
+    const before=input.value;
+    if(before.length-(caret-start)+token.length+1>16000)return notify('프롬프트는 16,000자까지 입력할 수 있습니다.',true);
+    const exists=project.edges.some(edge=>edge.from===source.id&&edge.to===node.id);
+    if(!exists){
+      try{project.edges.push(makeConnection(project,source.id,node.id,uuid(),'image'));}
+      catch(error){notify(error.message,true);return;}
+    }
+    input.setRangeText(token+' ',start,caret,'end');
+    node.data.mentions=[...moveMentions(node.data.mentions,before,input.value),{start,token,sourceId:source.id}].sort((a,b)=>a.start-b.start);
+    input.dataset.mentionCommit='true';
+    closeMentionMenu();
+    input.focus();
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+    if(!exists){
+      renderEdges();
+      updatePendingPorts();
+      scheduleUsage();
+      $('graph-stats').textContent=project.nodes.length+'개 노드 · '+project.edges.length+'개 연결';
+    }
+  };
   const element=document.createElement('div');
   element.setAttribute('role','group');
-  element.setAttribute('aria-label','연결된 참조 이미지');
+  element.setAttribute('aria-label','프로젝트 참조 이미지');
   Object.assign(element.style,{position:'fixed',zIndex:20,background:'white',border:'1px solid #d3d4d9',
     borderRadius:'10px',padding:'6px',maxHeight:'240px',overflow:'auto',boxShadow:'0 4px 16px #0002'});
   const rect=input.getBoundingClientRect();
@@ -495,39 +520,29 @@ function showMentionMenu(input){
   element.style.width='240px';
   element.style.top=Math.max(8,Math.min(rect.bottom+4,innerHeight-248))+'px';
   for(const source of candidates){
-    const title=source.data.label||TYPES[source.type].label;
-    if(!title.toLowerCase().includes(match[1].toLowerCase()))continue;
+    const title=mentionTitle(source);
     const button=document.createElement('button');
     button.type='button';
     Object.assign(button.style,{display:'flex',alignItems:'center',gap:'8px',width:'100%',padding:'5px',textAlign:'left'});
     const thumb=new Image(36,28);
     thumb.src=source.data.image;thumb.alt='';thumb.style.objectFit='cover';
     button.append(thumb,document.createTextNode(title+' #'+source.data.sequence));
-    button.addEventListener('click',()=>{
-      if(!input.isConnected||nodeLocked(node.id)){closeMentionMenu();return;}
-      const token='@'+title;
-      const before=input.value;
-      input.setRangeText(token+' ',start,caret,'end');
-      node.data.mentions=[...moveMentions(node.data.mentions,before,input.value),{start,token,sourceId:source.id}].sort((a,b)=>a.start-b.start);
-      input.dataset.mentionCommit='true';
-      closeMentionMenu();
-      input.focus();
-      input.dispatchEvent(new Event('input',{bubbles:true}));
-    });
+    button.addEventListener('click',()=>commit(source));
     element.append(button);
   }
   if(!element.childElementCount)return;
   document.body.append(element);
-  mentionMenu={element,input};
+  mentionMenu={element,input,exact,commit};
 }
 document.addEventListener('pointerdown',event=>{
   if(mentionMenu&&!mentionMenu.element.contains(event.target)&&event.target!==mentionMenu.input)closeMentionMenu();
 });
 document.addEventListener('keydown',event=>{
-  if(!mentionMenu||event.isComposing)return;
-  const {element,input}=mentionMenu;
+  if(!mentionMenu||isImeKey(event))return;
+  const {element,input,exact,commit}=mentionMenu;
   const buttons=[...element.querySelectorAll('button')],index=buttons.indexOf(event.target);
   if(event.target!==input&&index<0)return;
+  if(event.target===input&&event.key==='Enter'&&!event.shiftKey&&exact){event.preventDefault();event.stopPropagation();commit(exact);return;}
   if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeMentionMenu();input.focus();}
   if(event.key==='ArrowDown'||event.key==='ArrowUp'){
     event.preventDefault();event.stopPropagation();
@@ -551,8 +566,9 @@ $('nodes').addEventListener('input',event=>{
   }
   const input=event.target.closest('[data-field]');if(!input)return;
   const node=project.nodes.find(n=>n.id===input.closest('[data-node]')?.dataset.node);if(!node||nodeLocked(node.id))return;
+  const committed=input.dataset.mentionCommit==='true';
   if(input.dataset.field==='text'&&['generate','edit'].includes(node.type)){
-    if(!input.dataset.mentionCommit)node.data.mentions=moveMentions(node.data.mentions,node.data.text||'',input.value);
+    if(!committed)node.data.mentions=moveMentions(node.data.mentions,node.data.text||'',input.value);
     delete input.dataset.mentionCommit;
   }
   node.data[input.dataset.field]=input.value;if(input.dataset.field==='label')input.style.width=Math.min(230,Math.max(30,[...input.value].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))+'px';delete runStates[node.id];
@@ -560,7 +576,7 @@ $('nodes').addEventListener('input',event=>{
   if(input.matches('.inline-prompt textarea[data-field="text"]'))refreshMentionHighlights(input);
   const count=input.closest('.node').querySelector('[data-char-count]');if(count)count.textContent=(node.data.text||'').length+'자';
   refreshPromptGuidance();
-  checkpoint('field:'+node.id+':'+input.dataset.field);scheduleSave();
+  checkpoint(committed?null:'field:'+node.id+':'+input.dataset.field);scheduleSave();
 });
 $('nodes').addEventListener('click',event=>{
   const helpButton=event.target.closest('button[data-action="help"]');

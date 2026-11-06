@@ -127,3 +127,28 @@ body:not(.show-library){height:100dvh;display:flex;flex-direction:column}body:no
 .color-actions{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;border-top:1px solid #eeeef1;padding-top:8px}
 .color-actions .button{min-height:32px;font-size:12px;padding:5px 8px}
 .color-panel button[aria-pressed="true"]{background:#e8edff;color:#344cb9}
+
+
+/* Keep the image card's footprint fixed while showing prompt controls. */
+.prompt-card-media{position:relative;isolation:isolate;overflow:hidden;border-radius:12px}
+.node .prompt-card-media>.node-preview,.node .prompt-card-media>.media-empty,
+.node .prompt-card-media .node-media-stage{border-radius:12px}
+.card-prompt-overlay{position:absolute;inset:auto 0 0;z-index:1;padding:24px 10px 8px;color:#fff;
+ background:linear-gradient(transparent,#111c);pointer-events:none}
+.prompt-card-media .inline-prompt{margin:0;padding:0;border:0;pointer-events:auto}
+.prompt-card-media .node-text.short{display:block;box-sizing:border-box;width:100%;height:42px;min-height:0;
+ max-height:none;resize:none;overflow:auto;padding:5px 6px;border:0;border-radius:6px;
+ color:#fff;background:transparent;font-size:13px;line-height:16px}
+.prompt-card-media .node-text.short::placeholder{color:#fff;opacity:1}
+.prompt-card-media .node-text.short:focus{height:104px;background:#111d}
+.prompt-card-media .mention-warning{display:block;color:#ffd0ca;font-size:11px;padding:3px 6px}
+.prompt-card-media .mention-warning[hidden]{display:none}
+.prompt-card-media .prompt-sources,.prompt-card-media .skill-connected{pointer-events:auto}
+.prompt-card-media .prompt-sources:empty{display:none}
+.node .prompt-card-media .node-settings{display:flex;min-height:0;height:0;overflow:hidden;visibility:hidden;
+ opacity:0;padding:0;border:0;pointer-events:none;transition:height 160ms ease,opacity 160ms ease}
+.node:hover .prompt-card-media .node-settings,.node.selected .prompt-card-media .node-settings,
+.node:focus-within .prompt-card-media .node-settings{height:36px;visibility:visible;opacity:1;pointer-events:auto}
+.prompt-card-media .ratio-control>.field-label{display:none}
+.prompt-card-media .ratio-control select,.prompt-card-media .node-settings .icon-button{background:#fffffff0;color:#252630}
+@media(prefers-reduced-motion:reduce){.node .prompt-card-media .node-settings{transition:none}}
