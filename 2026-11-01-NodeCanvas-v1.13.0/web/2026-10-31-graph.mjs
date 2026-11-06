@@ -108,6 +108,6 @@ export function starterProject(){
 export function editProject(){
  return {version:'1.0.0',name:'이미지 편집하기',nodes:[
   {id:'image-start',type:'image',x:64,y:120,data:{label:'이미지 업로드'}},
-  {id:'edit-start',type:'edit',x:500,y:120,data:{text:'주요 피사체와 구도를 유지하고, 빛을 따뜻한 노을빛으로 바꿔 주세요.',ratio:'3:2',label:'이미지 편집'}}
+  {id:'edit-start',type:'edit',x:560,y:120,data:{text:'주요 피사체와 구도를 유지하고, 빛을 따뜻한 노을빛으로 바꿔 주세요.',ratio:'3:2',label:'이미지 편집'}}
  ],edges:[{id:'edge-image-edit',from:'image-start',to:'edit-start'}]};
 }
