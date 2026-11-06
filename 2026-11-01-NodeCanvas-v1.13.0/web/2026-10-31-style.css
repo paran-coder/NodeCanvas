@@ -148,10 +148,12 @@ body:not(.show-library){height:100dvh;display:flex;flex-direction:column}body:no
 .node .prompt-card-media .node-settings{display:flex;min-height:0;height:0;gap:4px;overflow:hidden;visibility:hidden;
  opacity:0;padding:0;border:0;pointer-events:none;transition:height 160ms ease,opacity 160ms ease}
 .node:hover .prompt-card-media .node-settings,.node.selected .prompt-card-media .node-settings,
-.node:focus-within .prompt-card-media .node-settings{height:28px;visibility:visible;opacity:1;pointer-events:auto}
+.node:focus-within .prompt-card-media .node-settings{height:24px;visibility:visible;opacity:1;pointer-events:auto}
 .prompt-card-media .ratio-control>.field-label{display:none}
-.node .prompt-card-media .ratio-control select{width:60px;height:26px;min-height:26px;font-size:11px;padding:2px 4px;border-radius:5px}
-.node .prompt-card-media .node-settings .button{min-height:26px;padding:3px 7px;font-size:11px;border-radius:5px}
-.node .prompt-card-media .node-settings .icon-button{width:26px;height:26px;border-radius:5px}
-.prompt-card-media .ratio-control select,.prompt-card-media .node-settings .icon-button{background:#fffffff0;color:#252630}
+.node .prompt-card-media .ratio-control select{width:48px;height:20px;min-height:20px;font-size:10px;padding:0 2px;border-radius:10px}
+.node .prompt-card-media .node-run{display:grid;place-items:center;width:22px;height:22px;min-height:22px;
+ padding:0;border:0;border-radius:50%;background:#fffffff0;color:#252630;font-size:13px;line-height:1}
+.node .prompt-card-media .node-run:hover:not(:disabled){background:#fff;color:#10182c}
+.node .prompt-card-media .node-run:focus-visible,.node .prompt-card-media select:focus-visible{outline:2px solid #a9c0ff;outline-offset:-2px}
+.prompt-card-media .ratio-control select{background:#fffffff0;color:#252630}
 @media(prefers-reduced-motion:reduce){.node .prompt-card-media .node-settings{transition:none}}
