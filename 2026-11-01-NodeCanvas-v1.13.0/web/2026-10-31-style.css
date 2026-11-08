@@ -149,7 +149,7 @@ body:not(.show-library){height:100dvh;display:flex;flex-direction:column}body:no
  max-height:none;resize:none;overflow:auto;padding:3px 4px;border:0;border-radius:4px;
  color:var(--prompt-ink);background:transparent;font-size:11px;line-height:14px}
 .prompt-card-media .node-text.short::placeholder{color:#fff;opacity:1}
-.prompt-card-media .node-text.short:focus{height:104px;background:transparent}
+.prompt-card-media:focus-within .node-text.short{height:104px;background:transparent}
 .prompt-card-media .mention-warning{display:block;color:var(--mention-warning-ink);font-size:11px;padding:3px 6px}
 .prompt-card-media .mention-warning[hidden]{display:none}
 .prompt-card-media .prompt-sources{pointer-events:auto}

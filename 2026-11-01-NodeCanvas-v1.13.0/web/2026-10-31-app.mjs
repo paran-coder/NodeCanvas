@@ -216,6 +216,9 @@ document.addEventListener('pointerdown',event=>{
   if(cardMenu&&!cardMenu.element.contains(event.target)&&event.target!==cardMenu.button)closeCardMenu();
 },true);
 window.addEventListener('resize',()=>closeCardMenu());
+$('nodes').addEventListener('pointerdown',event=>{
+  if(event.button===0&&event.target.closest('[data-reference-add],[data-reference-remove]'))event.preventDefault();
+});
 function field(n,label,short=false){const info=short?promptPresentation(project,n):{label,placeholder:'원하는 장면이나 재사용할 지시문을 입력하세요…',sources:[]};return `${short?`<div class="prompt-sources" data-sources-for="${esc(n.id)}">${promptSources(info)}</div>`:''}<label class="node-field ${short?'inline-prompt':''}">${short?'':`<span class="field-label">${esc(info.label)}</span>`}<textarea class="node-text ${short?'short':''}" data-field="text" aria-label="${esc(TYPES[n.type].label)} ${esc(info.label)}" maxlength="16000" ${nodeLocked(n.id)?'disabled':''} placeholder="${esc(hasSkill(n)?skillHint(n):info.placeholder)}">${esc(n.data.text||'')}</textarea></label>`;}
 function nodeSkill(node){const source=project.edges.filter(e=>e.to===node.id).map(e=>project.nodes.find(n=>n.id===e.from)).find(n=>n?.type==='skill');return getSkill(source?.data.skill);}
 function skillHint(node){return nodeSkill(node)?.promptHint||'예: 얼굴과 배경은 유지하고 앞머리가 있는 단발로 바꿔 주세요…';}
@@ -566,8 +569,11 @@ function refreshMentionHighlights(onlyInput){
     if(!view){
       const wrapper=document.createElement('div');
       wrapper.style.position='relative';
+      const focused=document.activeElement===input;
+      const selection=[input.selectionStart,input.selectionEnd,input.selectionDirection];
       input.before(wrapper);
       wrapper.append(input);
+      if(focused){input.focus({preventScroll:true});input.setSelectionRange(...selection);}
       const mirror=document.createElement('div');
       mirror.setAttribute('aria-hidden','true');
       Object.assign(mirror.style,{position:'absolute',pointerEvents:'none',overflow:'hidden',whiteSpace:'pre-wrap',overflowWrap:'break-word'});
@@ -665,6 +671,10 @@ function showMentionMenu(input,all=false){
   element.setAttribute('role','group');
   element.setAttribute('aria-label','프로젝트 참조 이미지');
   element.className='mention-menu';
+  // Keep the prompt focused until the candidate's click is committed.
+  element.addEventListener('pointerdown',event=>{
+    if(event.button===0)event.preventDefault();
+  });
   for(const source of candidates){
     const title=mentionTitle(source);
     const button=document.createElement('button');
@@ -850,10 +860,10 @@ $('templates-open').onclick=()=>{
   const rect=$('templates-open').getBoundingClientRect();$('template-menu').hidden=false;
   const pos=menuPosition({x:rect.left,y:rect.bottom+8},{width:innerWidth,height:innerHeight},$('template-menu').getBoundingClientRect());$('template-menu').style.left=pos.x+'px';$('template-menu').style.top=pos.y+'px';$('template-basic').focus();
 };
-document.addEventListener('pointerdown',event=>{const active=document.activeElement;if(active?.matches('input,textarea,select,[contenteditable="true"],.node-tools button,.node button[data-action="download"]')&&active!==event.target&&!active.contains(event.target))active.blur();
+document.addEventListener('pointerdown',event=>{if(event.target.closest('.reference-assets,.mention-menu,.card-choice-menu,[data-card-menu]'))return;const active=document.activeElement;if(active?.matches('input,textarea,select,[contenteditable="true"],.node-tools button,.node button[data-action="download"]')&&active!==event.target&&!active.contains(event.target))active.blur();
  else if(event.pointerType==='mouse'&&event.button===0&&active?.matches('button[data-action="help"]')&&!active.closest('[data-node]')?.contains(event.target))active.blur();
 },true);
-document.addEventListener('pointerdown',event=>{if(!event.target.closest('#node-menu,#action-menu,#template-menu,#add-node,#templates-open,.port'))closeMenus();});
+document.addEventListener('pointerdown',event=>{if(!event.target.closest('#node-menu,#action-menu,#template-menu,#add-node,#templates-open,.port,.mention-menu,.card-choice-menu,[data-card-menu],[data-reference-add]'))closeMenus();});
 $('zoom-in').onclick=()=>zoom(1.15);$('zoom-out').onclick=()=>zoom(1/1.15);$('zoom-reset').onclick=()=>zoom(1/view.scale);$('fit-view').onclick=fitView;
 $('project-name').oninput=event=>{if(!editable()){event.target.value=project.name;return;}project.name=event.target.value;checkpoint('project-name');scheduleSave();};
 $('export-project').onclick=exportProject;
