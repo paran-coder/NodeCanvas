@@ -1,4 +1,4 @@
-import {bindMentionPrompt,moveMentions,cleanMentions,mentionCandidates,mentionTitle,exactMention} from './2026-11-03-image-mentions.mjs';
+import {bindMentionPrompt,moveMentions,cleanMentions,mentionCandidates,mentionTitle,exactMention,mentionMenuPlacement} from './2026-11-03-image-mentions.mjs';
 import {colorSettings} from './2026-11-03-color.mjs';
 import {renderColorPanel, loadColorPanel, refreshColorPanel, colorPng} from './2026-11-03-color-panel.mjs';
 import {ensureNodeNumbers,assignNodeNumber,nodeLabel,mergeNodeCounters} from './2026-11-01-node-numbers.mjs';
@@ -457,7 +457,7 @@ function refreshMentionHighlights(onlyInput){
     }
     const {mirror,warning,sync}=view;
     const style=getComputedStyle(input);
-    const ink=input.style.color==='transparent'?mirror.style.color:style.color;
+    const ink=style.getPropertyValue('--prompt-ink').trim()||style.color;
     Object.assign(mirror.style,{left:input.offsetLeft+input.clientLeft+'px',top:input.offsetTop+input.clientTop+'px',
       boxSizing:'border-box',padding:style.padding,font:style.font,lineHeight:style.lineHeight,
       letterSpacing:style.letterSpacing,textAlign:style.textAlign,color:ink,tabSize:style.tabSize});
@@ -469,7 +469,7 @@ function refreshMentionHighlights(onlyInput){
       missing||=!connected;
       const span=document.createElement('span');
       span.textContent=token;
-      span.style.color=connected?'#b7cdff':'#ffd0ca';
+      span.style.color=style.getPropertyValue(connected?'--mention-ink':'--mention-warning-ink').trim();
       mirror.append(input.value.slice(end,start),span);
       end=start+token.length;
     }
@@ -486,6 +486,7 @@ const mentionResizeObserver=new ResizeObserver(entries=>{
 });
 let mentionMenu=null;
 function closeMentionMenu(){
+  mentionMenu?.dispose();
   mentionMenu?.element.remove();
   mentionMenu=null;
 }
@@ -529,26 +530,36 @@ function showMentionMenu(input){
   const element=document.createElement('div');
   element.setAttribute('role','group');
   element.setAttribute('aria-label','프로젝트 참조 이미지');
-  Object.assign(element.style,{position:'fixed',zIndex:20,background:'white',border:'1px solid #d3d4d9',
-    borderRadius:'10px',padding:'6px',maxHeight:'240px',overflow:'auto',boxShadow:'0 4px 16px #0002'});
-  const rect=input.getBoundingClientRect();
-  element.style.left=Math.max(8,Math.min(rect.left,innerWidth-248))+'px';
-  element.style.width='240px';
-  element.style.top=Math.max(8,Math.min(rect.bottom+4,innerHeight-248))+'px';
+  element.className='mention-menu';
   for(const source of candidates){
     const title=mentionTitle(source);
     const button=document.createElement('button');
     button.type='button';
-    Object.assign(button.style,{display:'flex',alignItems:'center',gap:'8px',width:'100%',padding:'5px',textAlign:'left'});
-    const thumb=new Image(36,28);
+    button.title=title+' #'+source.data.sequence;
+    const thumb=new Image(20,20);
     thumb.src=source.data.image;thumb.alt='';thumb.style.objectFit='cover';
-    button.append(thumb,document.createTextNode(title+' #'+source.data.sequence));
+    const label=document.createElement('span');
+    label.textContent=button.title;
+    button.append(thumb,label);
     button.addEventListener('click',()=>commit(source));
     element.append(button);
   }
   if(!element.childElementCount)return;
   document.body.append(element);
-  mentionMenu={element,input,exact,commit};
+  const place=()=>{
+    if(!input.isConnected){closeMentionMenu();return;}
+    const box=mentionMenuPlacement(input.getBoundingClientRect(),{width:innerWidth,height:innerHeight},candidates.length);
+    Object.assign(element.style,{left:box.left+'px',top:box.top+'px',width:box.width+'px',maxHeight:box.height+'px'});
+    element.hidden=box.height<38;
+  };
+  const dispose=()=>{
+    window.removeEventListener('resize',place);
+    window.removeEventListener('scroll',place,true);
+  };
+  mentionMenu={element,input,exact,commit,dispose};
+  window.addEventListener('resize',place);
+  window.addEventListener('scroll',place,true);
+  place();
 }
 document.addEventListener('pointerdown',event=>{
   if(mentionMenu&&!mentionMenu.element.contains(event.target)&&event.target!==mentionMenu.input)closeMentionMenu();

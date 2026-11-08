@@ -56,3 +56,27 @@ export function exactMention(candidates,query){
   const exact=candidates.filter(source=>mentionTitle(source).toLowerCase()===query.toLowerCase());
   return exact.length===1?exact[0]:null;
 }
+
+export function mentionMenuPlacement(rect,viewport,count){
+  const margin=8,gap=6;
+  const width=Math.min(220,viewport.width-margin*2);
+  const wanted=Math.min(6,count)*28+10;
+  const below=viewport.height-margin-rect.bottom-gap;
+  const above=rect.top-margin-gap;
+  const left=Math.max(margin,Math.min(rect.left,viewport.width-margin-width));
+  if(Math.max(below,above)>=Math.min(wanted,66)){
+    const down=below>=wanted||below>=above;
+    const height=Math.min(wanted,down?below:above);
+    return {left,top:down?rect.bottom+gap:rect.top-gap-height,width,height};
+  }
+  const right=viewport.width-margin-rect.right-gap;
+  const before=rect.left-margin-gap;
+  if(Math.max(right,before)>=width){
+    const height=Math.min(wanted,viewport.height-margin*2);
+    return {left:right>=width?rect.right+gap:rect.left-gap-width,
+      top:Math.max(margin,Math.min(rect.top,viewport.height-margin-height)),width,height};
+  }
+  const down=below>=above;
+  const height=Math.max(0,Math.min(wanted,down?below:above));
+  return {left,top:down?rect.bottom+gap:Math.max(margin,rect.top-gap-height),width,height};
+}
