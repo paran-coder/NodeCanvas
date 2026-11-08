@@ -5,11 +5,28 @@ export class TaskQueue {
   hasProject(id){return this.pending.some(t=>t.projectId===id);}
   locked(projectId,nodeId){return this.pending.some(t=>t.projectId===projectId&&t.nodeIds.includes(nodeId));}
   emit(task){this.onChange(task);}
-  add(task){
-    if(this.pending.length>=this.limit)throw Error(`작업은 실행 중인 작업을 포함해 ${this.limit}개까지 등록할 수 있습니다.`);
-    const writes=task.writeIds||task.nodeIds;
-    if(this.pending.some(t=>t.projectId===task.projectId&&((t.writeIds||t.nodeIds).some(id=>task.nodeIds.includes(id))||writes.some(id=>t.nodeIds.includes(id)))))throw Error('이미 실행 또는 대기 중인 노드가 포함되어 있습니다. 다른 노드에서 새 작업을 준비하세요.');
-    const item={...task,state:'queued',createdAt:Date.now(),controller:new AbortController()};this.items.push(item);this.emit(item);this.schedule();return item;
+  checkMany(tasks){
+    if(!Array.isArray(tasks)||!tasks.length)throw Error('등록할 작업이 없습니다.');
+    if(this.pending.length+tasks.length>this.limit)throw Error('작업은 실행 중인 작업을 포함해 '+this.limit+'개까지 등록할 수 있습니다.');
+    const reserved=[...this.pending],ids=new Set(this.items.map(task=>task.id));
+    for(const task of tasks){
+      if(ids.has(task.id))throw Error('이미 등록된 작업입니다.');
+      const writes=task.writeIds||task.nodeIds;
+      if(reserved.some(other=>other.projectId===task.projectId&&
+        ((other.writeIds||other.nodeIds).some(id=>task.nodeIds.includes(id))||writes.some(id=>other.nodeIds.includes(id))))){
+        throw Error('실행·대기 중이거나 여러 요청이 함께 생성해야 하는 참조 노드가 있습니다. 참조 이미지 생성을 마친 뒤 다시 실행하세요.');
+      }
+      ids.add(task.id);reserved.push(task);
+    }
+  }
+  add(task){return this.addMany([task])[0];}
+  addMany(tasks){
+    this.checkMany(tasks);
+    const items=tasks.map(task=>({...task,state:'queued',createdAt:Date.now(),controller:new AbortController()}));
+    this.items.push(...items);
+    for(const item of items)this.emit(item);
+    this.schedule();
+    return items;
   }
   schedule(){if(this.scheduled||this.active)return;this.scheduled=true;queueMicrotask(()=>{this.scheduled=false;void this.drain();});}
   async drain(){

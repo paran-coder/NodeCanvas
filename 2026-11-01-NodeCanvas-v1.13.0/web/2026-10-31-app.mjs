@@ -1,3 +1,4 @@
+import {createGenerationBatch,removeReference} from './2026-11-08-generation-batch.mjs';
 import {bindMentionPrompt,moveMentions,cleanMentions,mentionCandidates,mentionTitle,exactMention,mentionMenuPlacement} from './2026-11-03-image-mentions.mjs';
 import {colorSettings} from './2026-11-03-color.mjs';
 import {renderColorPanel, loadColorPanel, refreshColorPanel, colorPng} from './2026-11-03-color-panel.mjs';
@@ -66,6 +67,7 @@ function updateEditControls(){$('undo-edit').disabled=applyingUpdate||taskQueue.
 function checkpoint(group=null){editHistory.record(project,group);updateEditControls();}
 function undoEdit(redo=false){if(!projectEditable())return;const next=redo?editHistory.redo():editHistory.undo();if(!next)return;mergeNodeCounters(next,project);project=next;selected=null;selectedIds.clear();cancelWire();closeMenus();renderAll();scheduleSave();}
 function updateView(){
+  closeMentionMenu();closeCardMenu();
   $('world').style.transform=`translate(${view.x}px,${view.y}px) scale(${view.scale})`;
   $('zoom-label').textContent=Math.round(view.scale*100)+'%';
   $('viewport').style.backgroundSize=`${24*view.scale}px ${24*view.scale}px`;
@@ -129,6 +131,91 @@ function preview(node,kind='generate'){
   return `<div class="image-placeholder media-empty"><span class="placeholder-symbol">✦</span><span>이미지 미리보기</span></div>`;
 }
 function promptSources(info){return info.sources.length?`<div class="prompt-source-status">연결된 텍스트 사용 중${info.sources.map(source=>`<button type="button" data-prompt-source="${esc(source.id)}" title="원본 텍스트 편집">${esc(source.label)}${source.empty?' · 내용 없음':''} ↗</button>`).join('')}</div>`:'';}
+
+function referenceAssets(node){
+  const sources=project.edges.filter(edge=>edge.to===node.id)
+    .map(edge=>project.nodes.find(source=>source.id===edge.from))
+    .filter(source=>source&&TYPES[source.type].output==='image');
+  const locked=nodeLocked(node.id);
+  return `<button type="button" class="reference-add" data-reference-add aria-label="참조 이미지 추가" title="참조 이미지 추가" ${locked?'disabled':''}>＋</button>${sources.map(source=>{
+    const title=nodeLabel(source,TYPES[source.type].label);
+    return `<span class="reference-asset" title="${esc(title)}">${isImage(source.data.image)?`<img src="${source.data.image}" alt="${esc(title)}" width="20" height="20">`:'<span aria-hidden="true">▧</span>'}<button type="button" data-reference-remove="${esc(source.id)}" aria-label="${esc(title)} 참조 제거" title="참조 제거" ${locked||nodeLocked(source.id)?'disabled':''}>×</button></span>`;
+  }).join('')}`;
+}
+function refreshReferenceAssets(id){
+  for(const node of project.nodes.filter(node=>['generate','edit'].includes(node.type)&&(!id||node.id===id))){
+    const strip=document.querySelector(`[data-node="${node.id}"] .reference-assets`);
+    if(!strip)continue;
+    const html=referenceAssets(node);
+    if(strip.innerHTML!==html)strip.innerHTML=html;
+  }
+}
+
+let cardMenu=null;
+function closeCardMenu(focus=false){
+  if(!cardMenu)return;
+  const {element,button}=cardMenu;
+  cardMenu=null;
+  element.remove();
+  button.setAttribute('aria-expanded','false');
+  if(focus&&button.isConnected)button.focus();
+}
+function showCardMenu(button){
+  const node=project.nodes.find(node=>node.id===button.closest('[data-node]')?.dataset.node);
+  const field=button.dataset.cardMenu;
+  if(!node||!editable(node.id)||button.disabled)return;
+  if(cardMenu?.button===button){closeCardMenu(true);return;}
+  closeCardMenu();closeMentionMenu();
+  const values=field==='count'?[1,2,3,4]:['1:1','3:2','2:3','16:9','9:16'];
+  const current=field==='count'?(node.data.count||1):nodeRatio(node);
+  const menu=document.createElement('div');
+  menu.className='card-choice-menu';
+  menu.setAttribute('role','listbox');
+  menu.setAttribute('aria-label',field==='count'?'생성 장수 선택':'이미지 비율 선택');
+  for(const value of values){
+    const option=document.createElement('button');
+    option.type='button';option.setAttribute('role','option');
+    option.setAttribute('aria-selected',String(value===current));
+    option.textContent=field==='count'?value+'장':value;
+    option.addEventListener('click',()=>{
+      closeCardMenu();
+      if(!button.isConnected||!editable(node.id))return;
+      node.data[field]=value;
+      button.textContent=field==='count'?'×'+value:value+' ▾';
+      button.setAttribute('aria-label',(field==='count'?'생성 장수 ':'이미지 비율 ')+value);
+      if(field==='ratio')button.closest('.prompt-card-media').dataset.ratio=nodeRatio(node);
+      checkpoint('field:'+node.id+':'+field);scheduleSave();button.focus();
+    });
+    menu.append(option);
+  }
+  document.body.append(menu);
+  const rect=button.getBoundingClientRect(),width=64,desired=values.length*24+8;
+  const below=innerHeight-rect.bottom-12,above=rect.top-12,down=below>=desired||below>=above;
+  const height=Math.min(desired,Math.max(0,down?below:above));
+  if(height<32){menu.remove();return;}
+  Object.assign(menu.style,{width:width+'px',maxHeight:height+'px',
+    left:Math.max(8,Math.min(rect.left,innerWidth-width-8))+'px',
+    top:(down?rect.bottom+4:rect.top-height-4)+'px'});
+  cardMenu={element:menu,button};button.setAttribute('aria-expanded','true');
+  const options=[...menu.children];
+  menu.addEventListener('keydown',event=>{
+    if(isImeKey(event))return;
+    if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
+      event.preventDefault();event.stopPropagation();
+      const index=options.indexOf(document.activeElement);
+      const next=event.key==='Home'?0:event.key==='End'?options.length-1:
+        (index+(event.key==='ArrowDown'?1:-1)+options.length)%options.length;
+      options[next].focus();
+    }else if(event.key==='Escape'){
+      event.preventDefault();event.stopPropagation();closeCardMenu(true);
+    }else if(event.key===' '||event.key==='Enter')event.stopPropagation();
+  });
+  (menu.querySelector('[aria-selected="true"]')||menu.firstElementChild).focus();
+}
+document.addEventListener('pointerdown',event=>{
+  if(cardMenu&&!cardMenu.element.contains(event.target)&&event.target!==cardMenu.button)closeCardMenu();
+},true);
+window.addEventListener('resize',()=>closeCardMenu());
 function field(n,label,short=false){const info=short?promptPresentation(project,n):{label,placeholder:'원하는 장면이나 재사용할 지시문을 입력하세요…',sources:[]};return `${short?`<div class="prompt-sources" data-sources-for="${esc(n.id)}">${promptSources(info)}</div>`:''}<label class="node-field ${short?'inline-prompt':''}">${short?'':`<span class="field-label">${esc(info.label)}</span>`}<textarea class="node-text ${short?'short':''}" data-field="text" aria-label="${esc(TYPES[n.type].label)} ${esc(info.label)}" maxlength="16000" ${nodeLocked(n.id)?'disabled':''} placeholder="${esc(hasSkill(n)?skillHint(n):info.placeholder)}">${esc(n.data.text||'')}</textarea></label>`;}
 function nodeSkill(node){const source=project.edges.filter(e=>e.to===node.id).map(e=>project.nodes.find(n=>n.id===e.from)).find(n=>n?.type==='skill');return getSkill(source?.data.skill);}
 function skillHint(node){return nodeSkill(node)?.promptHint||'예: 얼굴과 배경은 유지하고 앞머리가 있는 단발로 바꿔 주세요…';}
@@ -149,7 +236,7 @@ function renderNodeMarkup(n,index=0){
     if(n.type==='skill')content=`<div class="skill-card-body"><p>${esc(getSkill(n.data.skill)?.description||'선택한 이미지 제작 지침')}</p></div>`;
     if(n.type==='prompt')content=`${field(n,'프롬프트')}<div class="text-footer"><span data-char-count>${(n.data.text||'').length}자</span><span>텍스트</span></div>`;
     if(n.type==='image')content=preview(n,'image')+(n.data.image?'<div class="node-settings"><button class="button quiet" data-action="upload">이미지 바꾸기</button><button class="button quiet" data-action="download">저장 ↗</button></div>':'');
-    if(['generate','edit'].includes(n.type))content=`<div class="prompt-card-media" data-ratio="${esc(nodeRatio(n))}">${preview(n,n.type==='generate'?'generate':'edit')}<div class="card-prompt-overlay">${field(n,n.type==='edit'?'편집 지시':'프롬프트',true)}<div class="node-settings"><label class="ratio-control"><span class="field-label">비율</span><select data-field="ratio" aria-label="${esc(type.label)} 이미지 비율" ${nodeLocked(n.id)||Boolean(nodeSkill(n)?.ratio)?'disabled':''} title="${nodeSkill(n)?.ratio?'선택한 스킬의 가로형 비율을 사용합니다.':'이미지 비율'}">${['1:1','3:2','2:3','16:9','9:16'].map(r=>`<option ${r===nodeRatio(n)?'selected':''}>${r}</option>`).join('')}</select></label><button class="button primary node-run" type="button" aria-label="${n.type==='edit'?'편집하기':'생성하기'}" title="${n.type==='edit'?'편집하기':'생성하기'}" data-run="${esc(n.id)}" ${nodeLocked(n.id)?'disabled':''}><span aria-hidden="true">↗</span></button></div></div></div>`;
+    if(['generate','edit'].includes(n.type))content=`<div class="prompt-card-media" data-ratio="${esc(nodeRatio(n))}">${preview(n,n.type==='generate'?'generate':'edit')}<div class="card-prompt-overlay"><div class="reference-assets" aria-label="참조 이미지">${referenceAssets(n)}</div>${field(n,n.type==='edit'?'편집 지시':'프롬프트',true)}<div class="node-settings"><span class="ratio-control"><button type="button" class="card-choice" data-card-menu="ratio" aria-haspopup="listbox" aria-expanded="false" aria-label="이미지 비율 ${esc(nodeRatio(n))}" ${nodeLocked(n.id)||Boolean(nodeSkill(n)?.ratio)?'disabled':''} title="${nodeSkill(n)?.ratio?'스킬에 지정된 비율':'이미지 비율'}">${esc(nodeRatio(n))} ▾</button></span>${n.type==='generate'?`<button type="button" class="card-choice count-choice" data-card-menu="count" aria-haspopup="listbox" aria-expanded="false" aria-label="생성 장수 ${n.data.count||1}" title="이 카드 실행 시 생성할 장수" ${nodeLocked(n.id)?'disabled':''}>×${n.data.count||1}</button>`:''}<button class="button primary node-run" type="button" aria-label="${n.type==='edit'?'편집하기':'생성하기'}" title="${n.type==='edit'?'편집하기':'생성하기'}" data-run="${esc(n.id)}" ${nodeLocked(n.id)?'disabled':''}><span aria-hidden="true">↗</span></button></div></div></div>`;
     if(n.type==='color')content=renderColorPanel(n,colorSource(n),nodeLocked(n.id),project.edges.some(edge=>edge.to===n.id));
     const status=state?.state==='queued'?'대기 중':state?.state==='cancelling'?'취소 중':state?.state==='running'?'생성 중':state?.state==='completed'?'완료':state?.state==='reused'?'기존 결과 사용':state?.state==='failed'?'확인 필요':'';
     return `<article class="node ${media?'media-node':n.type==='skill'?'text-node skill-node':'text-node'} ${selectedIds.has(n.id)?'selected':''} ${state?.state==='failed'?'error-node':''}" style="width:${nodeWidth(n.type)}px;left:${n.x}px;top:${n.y}px;--node-tint:${tints[n.type]};--port-color:${n.type==='skill'?'#a36b26':type.output==='text'?'#4262ff':'#79609e'}" data-node="${esc(n.id)}" aria-label="${esc(nodeLabel(n,type.label))} 노드"><div class="node-header" data-drag="${esc(n.id)}"><span class="node-icon" title="이 영역을 끌어 노드 이동">${nodeIcon(n.type)}</span><span class="node-name"><input class="node-label" style="width:${Math.min(230,Math.max(30,[...(n.data.label||type.label)].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))}px" data-field="label" aria-label="${esc(type.label)} 노드 이름" value="${esc(n.data.label||type.label)}" maxlength="80" ${nodeLocked(n.id)?'disabled':''}><span class="node-sequence" aria-label="노드 번호 ${n.data.sequence}">#${n.data.sequence}</span></span><span class="node-state ${esc(state?.state||'')}">${esc(status)}</span>${renderNodeTools(n)}<button class="node-help" data-action="help" aria-label="${esc(type.label)} 사용 방법" title="${esc(type.label)} 사용 방법">?</button></div>${renderPorts(n)}<div class="node-content">${content}</div></article>`;
@@ -166,6 +253,7 @@ function hydrateColorPanels(){
   }
 }
 function renderNodes(){
+  closeMentionMenu();closeCardMenu();
   $('nodes').innerHTML=project.nodes.map(renderNodeMarkup).join('');hydrateColorPanels();
   observeMedia();renderEdges();scheduleUsage();$('graph-stats').textContent=`${project.nodes.length}개 노드 · ${project.edges.length}개 연결`;$('empty-state').hidden=project.nodes.length>0;updatePendingPorts();
 }
@@ -181,7 +269,7 @@ function toggleSelection(id){if(selectedIds.has(id))selectedIds.delete(id);else 
 function hideMarquee(){marquee.hidden=true;}
 function finishTemporaryPan(){spaceHeld=false;$('viewport').classList.toggle('pan-mode',tool==='pan');}
 
-function closeMenus(returnFocus=false){$('node-menu').hidden=true;$('action-menu').hidden=true;$('template-menu').hidden=true;menuContext=null;if(returnFocus)$('viewport').focus({preventScroll:true});}
+function closeMenus(returnFocus=false){closeMentionMenu();closeCardMenu();$('node-menu').hidden=true;$('action-menu').hidden=true;$('template-menu').hidden=true;menuContext=null;if(returnFocus)$('viewport').focus({preventScroll:true});}
 function cancelWire(){hideMarquee();pendingPort=null;drag=null;renderWire();updatePendingPorts();document.querySelectorAll('.compatible').forEach(el=>el.classList.remove('compatible'));}
 function deleteNode(id){if(!editable(id))return;const node=project.nodes.find(n=>n.id===id);if(!node||!confirm(`“${nodeLabel(node,TYPES[node.type].label)}” 노드와 연결을 삭제할까요?`))return;project.nodes=project.nodes.filter(n=>n.id!==id);project.edges=project.edges.filter(e=>e.from!==id&&e.to!==id);selected=null;selectedIds.clear();cancelWire();closeMenus();changed();}
 function duplicateNode(id){if(!editable())return;const node=project.nodes.find(n=>n.id===id);if(!node)return;if(project.nodes.length>=MAX_NODE_COUNT)return notify('노드는 150개까지 추가할 수 있습니다.',true);const copy=structuredClone(node);copy.id=uuid();copy.x+=45;copy.y+=55;try{assignNodeNumber(project,copy);}catch(error){return notify(error.message,true);}project.nodes.push(copy);selected=copy.id;selectedIds.clear();selectedIds.add(copy.id);closeMenus();changed();}
@@ -317,11 +405,55 @@ async function storeTaskImage(task,node,image){
  task.unsavedImage=null;
  }finally{release();}
 }
+
 async function runWorkflow(target){
- if(applyingUpdate||!activeSpaceId)return;const originId=activeSpaceId,originSession=projectSession;try{await persistCurrent();if(activeSpaceId!==originId||projectSession!==originSession)return notify('프로젝트가 바뀌어 실행 요청을 등록하지 않았습니다.');const snapshot=structuredClone(project),{order,reused}=executionPlan(snapshot,target);if(!order.length)return notify('노드를 먼저 추가하세요.');const writeIds=order.filter(id=>!reused.has(id)&&['generate','edit'].includes(snapshot.nodes.find(n=>n.id===id).type));
- if(writeIds.length&&(!bridge.connected||!bridge.account)){$('connect-dialog').showModal();return connectionMessage('PC 페어링과 ChatGPT 로그인을 먼저 완료하세요.');}
- const task=taskQueue.add({id:uuid(),projectId:activeSpaceId,projectName:project.name,label:target?nodeLabel(snapshot.nodes.find(n=>n.id===target),'선택 생성'):'전체 워크플로',snapshot,order,reused,nodeIds:order,writeIds});notify(taskQueue.active?'생성 대기열에 등록했습니다. 다른 작업을 준비할 수 있어요.':'작업을 등록했습니다.');
- }catch(error){notify(error.message,true);}
+ if(applyingUpdate||!activeSpaceId)return;
+ const originId=activeSpaceId,originSession=projectSession;
+ const release=await acquireWorkspace();
+ let beforeBatch=null,staging=false;
+ try{
+  if(activeSpaceId!==originId||projectSession!==originSession)return;
+  await persistCurrent();
+  if(activeSpaceId!==originId||projectSession!==originSession)return;
+  const source=project.nodes.find(node=>node.id===target);
+  const count=source?.type==='generate'?(source.data.count||1):1;
+  let candidate=project,targets=[target];
+  if(target&&count>1){
+    const heights=Object.fromEntries([...document.querySelectorAll('[data-node]')].map(el=>[el.dataset.node,el.offsetHeight]));
+    ({graph:candidate,targets}=createGenerationBatch(project,target,count,{heights}));
+  }
+  const tasks=targets.map(id=>{
+    const snapshot=structuredClone(candidate),{order,reused}=executionPlan(snapshot,id);
+    const writeIds=order.filter(key=>!reused.has(key)&&['generate','edit'].includes(snapshot.nodes.find(node=>node.id===key).type));
+    return {id:uuid(),projectId:activeSpaceId,projectName:candidate.name,
+      label:id?nodeLabel(snapshot.nodes.find(node=>node.id===id),'선택 생성'):'전체 워크플로',
+      snapshot,order,reused,nodeIds:order,writeIds};
+  });
+  if(tasks.every(task=>!task.order.length))return notify('노드를 먼저 추가하세요.');
+  if(tasks.some(task=>task.writeIds.length)&&(!bridge.connected||!bridge.account)){
+    $('connect-dialog').showModal();
+    return connectionMessage('PC 페어링과 ChatGPT 로그인을 먼저 완료하세요.');
+  }
+  taskQueue.checkMany(tasks);
+  if(candidate!==project){
+    beforeBatch=project;project=candidate;
+    document.querySelector('.workspace').inert=true;
+    document.querySelector('.app-header').inert=true;
+    staging=true;
+    scheduleSave();
+    await persistCurrent();
+    beforeBatch=null;
+    checkpoint();renderAll();
+  }
+  taskQueue.addMany(tasks);
+  notify(count>1?count+'장 생성을 등록했습니다. 각 노드에 순서대로 저장합니다.':'작업을 등록했습니다.');
+ }catch(error){
+  if(beforeBatch){project=beforeBatch;scheduleSave();renderAll();}
+  notify(error.message,true);
+ }finally{
+  if(staging){document.querySelector('.workspace').inert=false;document.querySelector('.app-header').inert=false;}
+  release();
+ }
 }
 async function executeTask(task,signal){
  const record=await getSpace(task.projectId);if(!record||record.trashed)throw new Error('프로젝트가 없거나 휴지통에 있어 실행하지 않았습니다.');
@@ -490,17 +622,18 @@ function closeMentionMenu(){
   mentionMenu?.element.remove();
   mentionMenu=null;
 }
-function showMentionMenu(input){
+function showMentionMenu(input,all=false){
   closeMentionMenu();
   const node=project.nodes.find(node=>node.id===input.closest('[data-node]')?.dataset.node);
   if(!node||!['generate','edit'].includes(node.type)||input.selectionStart!==input.selectionEnd)return;
   const caret=input.selectionStart;
   const match=/(?:^|\s)@([^@\n]{0,80})$/.exec(input.value.slice(0,caret));
-  if(!match)return;
-  const start=caret-match[1].length-1;
+  if(!match&&!all)return;
+  const start=all?caret:caret-match[1].length-1;
+  const prefix=all&&start>0&&!/\s/.test(input.value[start-1])?' ':'';
   if(node.data.mentions?.some(item=>item.start===start&&input.value.slice(start,caret)===item.token))return;
-  const candidates=mentionCandidates(project,node,match[1]);
-  const exact=exactMention(candidates,match[1]);
+  const candidates=mentionCandidates(project,node,all?'':match[1]);
+  const exact=all?null:exactMention(candidates,match[1]);
   const commit=source=>{
     if(!input.isConnected||nodeLocked(node.id)||nodeLocked(source.id)){closeMentionMenu();return;}
     const title=mentionTitle(source);
@@ -508,14 +641,15 @@ function showMentionMenu(input){
     const suffix=duplicate?' #'+source.data.sequence:'';
     const token='@'+title.slice(0,80-suffix.length)+suffix;
     const before=input.value;
-    if(before.length-(caret-start)+token.length+1>16000)return notify('프롬프트는 16,000자까지 입력할 수 있습니다.',true);
+    if(before.length-(caret-start)+prefix.length+token.length+1>16000)return notify('프롬프트는 16,000자까지 입력할 수 있습니다.',true);
     const exists=project.edges.some(edge=>edge.from===source.id&&edge.to===node.id);
     if(!exists){
+      if(project.edges.filter(edge=>edge.to===node.id&&TYPES[project.nodes.find(source=>source.id===edge.from)?.type]?.output==='image').length>=4)return notify('참조 이미지는 최대 4장까지 연결하세요.',true);
       try{project.edges.push(makeConnection(project,source.id,node.id,uuid(),'image'));}
       catch(error){notify(error.message,true);return;}
     }
-    input.setRangeText(token+' ',start,caret,'end');
-    node.data.mentions=[...moveMentions(node.data.mentions,before,input.value),{start,token,sourceId:source.id}].sort((a,b)=>a.start-b.start);
+    input.setRangeText(prefix+token+' ',start,caret,'end');
+    node.data.mentions=[...moveMentions(node.data.mentions,before,input.value),{start:start+prefix.length,token,sourceId:source.id}].sort((a,b)=>a.start-b.start);
     input.dataset.mentionCommit='true';
     closeMentionMenu();
     input.focus();
@@ -544,7 +678,7 @@ function showMentionMenu(input){
     button.addEventListener('click',()=>commit(source));
     element.append(button);
   }
-  if(!element.childElementCount)return;
+  if(!element.childElementCount){if(all)notify('이미지를 업로드하거나 생성한 뒤 참조를 추가하세요.');return;}
   document.body.append(element);
   const place=()=>{
     if(!input.isConnected){closeMentionMenu();return;}
@@ -603,6 +737,8 @@ $('nodes').addEventListener('input',event=>{
   if(input.matches('.inline-prompt textarea[data-field="text"]'))refreshMentionHighlights(input);
   const count=input.closest('.node').querySelector('[data-char-count]');if(count)count.textContent=(node.data.text||'').length+'자';
   refreshPromptGuidance();
+  if(committed)refreshReferenceAssets(node.id);
+  if(input.dataset.field==='label')refreshReferenceAssets();
   checkpoint(committed?null:'field:'+node.id+':'+input.dataset.field);scheduleSave();
 });
 $('nodes').addEventListener('click',event=>{
@@ -619,6 +755,26 @@ $('nodes').addEventListener('click',event=>{
   if(event.target.closest('input,textarea,select'))return;
   if((event.ctrlKey||event.metaKey)&&!event.target.closest('button'))return;
   if(!selectedIds.has(id))select(id);
+  const choice=event.target.closest('[data-card-menu]');
+  if(choice){showCardMenu(choice);return;}
+  const addReference=event.target.closest('[data-reference-add]');
+  if(addReference){
+    if(!editable(id))return;
+    const input=element.querySelector('.inline-prompt textarea');
+    input.focus();showMentionMenu(input,true);return;
+  }
+  const removeButton=event.target.closest('[data-reference-remove]');
+  if(removeButton){
+    const sourceId=removeButton.dataset.referenceRemove;
+    if(!editable(id)||!editable(sourceId))return;
+    const node=project.nodes.find(node=>node.id===id);
+    const next=removeReference(node,sourceId);
+    project.edges=project.edges.filter(edge=>!(edge.from===sourceId&&edge.to===id));
+    Object.assign(node.data,next);
+    changed();
+    document.querySelector(`[data-node="${id}"] textarea`)?.focus();
+    return;
+  }
   const sourceId=event.target.closest('[data-prompt-source]')?.dataset.promptSource;if(sourceId){const source=project.nodes.find(n=>n.id===sourceId);if(source){select(source.id);const rect=$('viewport').getBoundingClientRect();view.x=rect.width/2-(source.x+nodeWidth(source.type)/2)*view.scale;view.y=100-source.y*view.scale;updateView();document.querySelector(`[data-node="${source.id}"] textarea`)?.focus({preventScroll:true});}return;}
   const action=event.target.closest('[data-action]')?.dataset.action;
   if(action?.startsWith('color-')){
