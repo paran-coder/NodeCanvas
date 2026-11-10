@@ -1,3 +1,4 @@
+import {wantsDistinctScenes,validateScenes,sceneRequest} from './2026-11-10-scene-planning.mjs';
 import {createGenerationBatch,removeReference} from './2026-11-08-generation-batch.mjs';
 import {bindMentionPrompt,moveMentions,cleanMentions,mentionCandidates,mentionTitle,exactMention,mentionMenuPlacement} from './2026-11-03-image-mentions.mjs';
 import {colorSettings} from './2026-11-03-color.mjs';
@@ -34,7 +35,7 @@ const selectedIds=new Set(['generate-start']);let spaceHeld=false;
 const marquee=document.createElement('div');marquee.className='selection-box';marquee.hidden=true;$('viewport').append(marquee);
 let runStates={};const stateByProject=new Map(),history=[];let applyingUpdate=false,transitioning=false,transitionRelease=null,workspaceTail=Promise.resolve();
 const taskQueue=new TaskQueue({execute:executeTask,cancel:cancelProviderTask,onChange:taskChanged});
-const bridge={url:'http://127.0.0.1:7330',token:'',connected:false,account:null,parallelLimit:1,loginPending:false};
+const bridge={url:'http://127.0.0.1:7330',token:'',connected:false,account:null,parallelLimit:1,scenePlanning:false,loginPending:false};
 let updates=null;
 let leaseController=null,leaseToken='',connectorPresent=false;
 let authAttempt=0,loginRequestBusy=false;
@@ -244,7 +245,7 @@ function renderNodeMarkup(n,index=0){
     if(n.type==='skill')content=`<div class="skill-card-body"><p>${esc(getSkill(n.data.skill)?.description||'선택한 이미지 제작 지침')}</p></div>`;
     if(n.type==='prompt')content=`${field(n,'프롬프트')}<div class="text-footer"><span data-char-count>${(n.data.text||'').length}자</span><span>텍스트</span></div>`;
     if(n.type==='image')content=preview(n,'image')+(n.data.image?'<div class="node-settings"><button class="button quiet" data-action="upload">이미지 바꾸기</button><button class="button quiet" data-action="download">저장 ↗</button></div>':'');
-    if(['generate','edit'].includes(n.type))content=`<div class="prompt-card-media" data-ratio="${esc(nodeRatio(n))}">${preview(n,n.type==='generate'?'generate':'edit')}<div class="card-prompt-overlay"><div class="reference-assets" aria-label="참조 이미지">${referenceAssets(n)}</div>${field(n,n.type==='edit'?'편집 지시':'프롬프트',true)}<div class="node-settings"><span class="ratio-control"><button type="button" class="card-choice" data-card-menu="ratio" aria-haspopup="listbox" aria-expanded="false" aria-label="이미지 비율 ${esc(nodeRatio(n))}" ${nodeLocked(n.id)||Boolean(nodeSkill(n)?.ratio)?'disabled':''} title="${nodeSkill(n)?.ratio?'스킬에 지정된 비율':'이미지 비율'}">${esc(nodeRatio(n))} ▾</button></span>${n.type==='generate'?`<button type="button" class="card-choice count-choice" data-card-menu="count" aria-haspopup="listbox" aria-expanded="false" aria-label="생성 장수 ${n.data.count||1}" title="이 카드 실행 시 생성할 장수" ${nodeLocked(n.id)?'disabled':''}>×${n.data.count||1}</button><button type="button" class="card-choice" data-card-menu="mode" aria-haspopup="listbox" aria-expanded="false" aria-label="생성 방식 ${generationModeLabel(n.data.mode)}" title="여러 장을 순차 또는 동시에 생성" ${nodeLocked(n.id)?'disabled':''}>${generationModeLabel(n.data.mode)}</button>`:''}<button class="button primary node-run" type="button" aria-label="${n.type==='edit'?'편집하기':'생성하기'}" title="${n.type==='edit'?'편집하기':'생성하기'}" data-run="${esc(n.id)}" ${nodeLocked(n.id)?'disabled':''}><span aria-hidden="true">↗</span></button></div></div></div>`;
+    if(['generate','edit'].includes(n.type))content=`<div class="prompt-card-media" data-ratio="${esc(nodeRatio(n))}">${preview(n,n.type==='generate'?'generate':'edit')}<div class="card-prompt-overlay"><div class="reference-assets" aria-label="참조 이미지">${referenceAssets(n)}</div>${field(n,n.type==='edit'?'편집 지시':'프롬프트',true)}${n.data.scene?`<div class="planned-scene" title="${esc(n.data.scene)}">${esc(n.data.scene)}</div>`:''}<div class="node-settings"><span class="ratio-control"><button type="button" class="card-choice" data-card-menu="ratio" aria-haspopup="listbox" aria-expanded="false" aria-label="이미지 비율 ${esc(nodeRatio(n))}" ${nodeLocked(n.id)||Boolean(nodeSkill(n)?.ratio)?'disabled':''} title="${nodeSkill(n)?.ratio?'스킬에 지정된 비율':'이미지 비율'}">${esc(nodeRatio(n))} ▾</button></span>${n.type==='generate'?`<button type="button" class="card-choice count-choice" data-card-menu="count" aria-haspopup="listbox" aria-expanded="false" aria-label="생성 장수 ${n.data.count||1}" title="이 카드 실행 시 생성할 장수" ${nodeLocked(n.id)?'disabled':''}>×${n.data.count||1}</button><button type="button" class="card-choice" data-card-menu="mode" aria-haspopup="listbox" aria-expanded="false" aria-label="생성 방식 ${generationModeLabel(n.data.mode)}" title="여러 장을 순차 또는 동시에 생성" ${nodeLocked(n.id)?'disabled':''}>${generationModeLabel(n.data.mode)}</button>`:''}<button class="button primary node-run" type="button" aria-label="${n.type==='edit'?'편집하기':'생성하기'}" title="${n.type==='edit'?'편집하기':'생성하기'}" data-run="${esc(n.id)}" ${nodeLocked(n.id)?'disabled':''}><span aria-hidden="true">↗</span></button></div></div></div>`;
     if(n.type==='color')content=renderColorPanel(n,colorSource(n),nodeLocked(n.id),project.edges.some(edge=>edge.to===n.id));
     const status=state?.state==='queued'?'대기 중':state?.state==='cancelling'?'취소 중':state?.state==='running'?'생성 중':state?.state==='completed'?'완료':state?.state==='reused'?'기존 결과 사용':state?.state==='failed'?'확인 필요':'';
     return `<article class="node ${media?'media-node':n.type==='skill'?'text-node skill-node':'text-node'} ${selectedIds.has(n.id)?'selected':''} ${state?.state==='failed'?'error-node':''}" style="width:${nodeWidth(n.type)}px;left:${n.x}px;top:${n.y}px;--node-tint:${tints[n.type]};--port-color:${n.type==='skill'?'#a36b26':type.output==='text'?'#4262ff':'#79609e'}" data-node="${esc(n.id)}" aria-label="${esc(nodeLabel(n,type.label))} 노드"><div class="node-header" data-drag="${esc(n.id)}"><span class="node-icon" title="이 영역을 끌어 노드 이동">${nodeIcon(n.type)}</span><span class="node-name"><input class="node-label" style="width:${Math.min(230,Math.max(30,[...(n.data.label||type.label)].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))}px" data-field="label" aria-label="${esc(type.label)} 노드 이름" value="${esc(n.data.label||type.label)}" maxlength="80" ${nodeLocked(n.id)?'disabled':''}><span class="node-sequence" aria-label="노드 번호 ${n.data.sequence}">#${n.data.sequence}</span></span><span class="node-state ${esc(state?.state||'')}">${esc(status)}</span>${renderNodeTools(n)}<button class="node-help" data-action="help" aria-label="${esc(type.label)} 사용 방법" title="${esc(type.label)} 사용 방법">?</button></div>${renderPorts(n)}<div class="node-content">${content}</div></article>`;
@@ -370,7 +371,7 @@ async function checkConnection(){
   if(!bridge.token)throw new Error('먼저 연결하기를 눌러 PC와 연결하세요.');
   await api('heartbeat',{tabId},false,7000);bridge.connected=true;
   startLease();
-  const status=await api('status');bridge.account=status.account;bridge.parallelLimit=Number.isInteger(status.parallelLimit)?status.parallelLimit:1;renderConnection();void updates?.refresh();
+  const status=await api('status');bridge.account=status.account;bridge.scenePlanning=status.scenePlanning===true;bridge.parallelLimit=Number.isInteger(status.parallelLimit)?status.parallelLimit:1;renderConnection();void updates?.refresh();
   const phase=authPhase(status,bridge.loginPending);
   if(phase==='signed-in'){bridge.loginPending=false;$('official-login-link').hidden=$('login-link-note').hidden=true;connectionMessage(`ChatGPT 연결됨${status.account.email?' · '+status.account.email:''}\n${status.account.plan||''} · ${status.storage==='keyring'?'이 PC에 로그인 저장':'종료 시 임시 로그인 해제'}`);}
   else if(phase==='pending')connectionMessage('다음 단계: 검은색 ‘공식 페이지에서 로그인하기’를 눌러 로그인하세요. 완료 후 이 작업실로 돌아오면 자동으로 확인합니다.');
@@ -425,13 +426,15 @@ async function storeTaskImage(task,node,image){
  }finally{release();}
 }
 
+let planningScenes=false;
 async function runWorkflow(target){
+ if(planningScenes)return notify('장면을 기획하고 있습니다. 잠시 기다려 주세요.');
  if(applyingUpdate||!activeSpaceId)return;
  const originId=activeSpaceId,originSession=projectSession;
- const release=await acquireWorkspace();
- let beforeBatch=null,staging=false;
+ let release=await acquireWorkspace();
+ let beforeBatch=null,staging=false,requestedPlan=false;
  try{
-  if(activeSpaceId!==originId||projectSession!==originSession)return;
+  if(activeSpaceId!==originId||projectSession!==originSession||planningScenes)return;
   await persistCurrent();
   if(activeSpaceId!==originId||projectSession!==originSession)return;
   const source=project.nodes.find(node=>node.id===target);
@@ -459,6 +462,32 @@ async function runWorkflow(target){
     return connectionMessage('PC 페어링과 ChatGPT 로그인을 먼저 완료하세요.');
   }
   taskQueue.checkMany(tasks);
+  if(count>1){
+    const sharedText=project.edges.filter(edge=>edge.to===target)
+      .map(edge=>project.nodes.find(node=>node.id===edge.from))
+      .filter(node=>node?.type==='prompt').map(node=>node.data.text);
+    const brief=[...sharedText,source.data.text].filter(Boolean).join('\n\n');
+    if(wantsDistinctScenes(brief,count)){
+      if(!bridge.scenePlanning)throw new Error('장면별 기획에는 연결 앱 v1.14.0이 필요합니다. AI 연결에서 설치 앱을 내려받으세요.');
+      if(taskQueue.pending.length)throw new Error('실행·대기 중인 작업을 마친 뒤 장면을 기획하세요.');
+      const base=project,revision=editHistory.states[editHistory.index];
+      requestedPlan=planningScenes=true;
+      notify(count+'개의 서로 다른 장면을 기획하고 있습니다.');
+      release();release=null;
+      const response=await api('scene-plan',{prompt:brief,count,ratio:nodeRatio(source)},false,75000);
+      const scenes=validateScenes(response.scenes,count);
+      release=await acquireWorkspace();
+      if(activeSpaceId!==originId||projectSession!==originSession)return;
+      if(project!==base||editHistory.states[editHistory.index]!==revision||drag){
+        throw new Error('기획 중에 카드가 변경됐습니다. 생성 버튼을 다시 눌러 주세요.');
+      }
+      taskQueue.checkMany(tasks);
+      targets.forEach((id,index)=>{
+        candidate.nodes.find(node=>node.id===id).data.scene=scenes[index];
+        tasks[index].snapshot.nodes.find(node=>node.id===id).data.scene=scenes[index];
+      });
+    }
+  }
   if(candidate!==project){
     beforeBatch=project;project=candidate;
     document.querySelector('.workspace').inert=true;
@@ -476,7 +505,8 @@ async function runWorkflow(target){
   notify(error.message,true);
  }finally{
   if(staging){document.querySelector('.workspace').inert=false;document.querySelector('.app-header').inert=false;}
-  release();
+  if(requestedPlan)planningScenes=false;
+  release?.();
  }
 }
 async function executeTask(task,signal){
@@ -489,7 +519,7 @@ async function executeTask(task,signal){
  else if(node.type==='skill')outputs[id]={skills:[node.data.skill]};
  else if(node.type==='image'){if(!isImage(node.data.image))throw new Error('참조 이미지 노드에 이미지를 불러오세요.');outputs[id]={text:'',images:[node.data.image]};}
  else{
- nodeState(task,id,{state:'running',phase:'요청 준비 중',startedAt:Date.now()});task.phase='요청 준비 중';renderTasks();const request=bindMentionPrompt(requestForNode(node,inputs),node,snapshot,outputs),deadline=Date.now()+600000;let response;
+ nodeState(task,id,{state:'running',phase:'요청 준비 중',startedAt:Date.now()});task.phase='요청 준비 중';renderTasks();const request=sceneRequest(bindMentionPrompt(requestForNode(node,inputs),node,snapshot,outputs),node.data.scene),deadline=Date.now()+600000;let response;
  while(!response){throwCancelled(signal);try{response=await api('jobs',task.parallelGroup?{...request,parallel:true}:request);}catch(error){if(error.status!==409||Date.now()>deadline)throw error;task.phase='연결 앱의 다른 작업 완료 대기';nodeState(task,id,{phase:task.phase});renderTasks();await pause(2500,signal);}}
  task.providerJob=response.id;task.cancelPromise=null;throwCancelled(signal);
  while(true){throwCancelled(signal);const job=await api('job',{id:task.providerJob});throwCancelled(signal);if(job.timings)task.timings[id]=job.timings;task.phase=job.images?.length?'이미지 수신 · 마무리 중':job.timings?.some(t=>t.stage==='generating')?'이미지 생성 중':'AI 응답 대기 중';nodeState(task,id,{phase:task.phase,...(job.images?.[0]?{previewImage:job.images[0]}:{})});renderTasks();
@@ -766,6 +796,9 @@ $('nodes').addEventListener('input',event=>{
   if(input.dataset.field==='text'&&['generate','edit'].includes(node.type)){
     if(!committed)node.data.mentions=moveMentions(node.data.mentions,node.data.text||'',input.value);
     delete input.dataset.mentionCommit;
+  }
+  if(input.dataset.field==='text'&&node.type==='generate'&&node.data.text!==input.value){
+    delete node.data.scene;input.closest('[data-node]')?.querySelector('.planned-scene')?.remove();
   }
   node.data[input.dataset.field]=input.value;if(input.dataset.field==='ratio')input.closest('.prompt-card-media').dataset.ratio=nodeRatio(node);if(input.dataset.field==='label')input.style.width=Math.min(230,Math.max(30,[...input.value].reduce((size,c)=>size+(/[^\x00-\x7f]/.test(c)?14:7),8)))+'px';delete runStates[node.id];
   if(input.matches('textarea[data-field="text"]')&&!event.isComposing)showMentionMenu(input);

@@ -3,6 +3,7 @@ import {createInterface} from 'node:readline';
 import {EventEmitter} from 'node:events';
 import {mkdir,readFile,writeFile,realpath,stat,lstat,readdir,rm} from 'node:fs/promises';
 import path from 'node:path';
+import {validateScenes} from '../web/2026-11-10-scene-planning.mjs';
 import {isImage} from '../web/2026-10-31-graph.mjs';
 
 const activeJobDirectories=new Set();
@@ -132,6 +133,65 @@ export class CodexProvider extends EventEmitter {
     return {authUrl:result.authUrl};
   }
   async logout() {if(this.active.size) throw new Error('작업을 취소한 뒤 로그아웃하세요.');await this.start();await this.rpc('account/logout');return {ok:true};}
+  async planScenes({prompt,count,ratio},{signal}={}){
+    if(this.active.size)throw new Error('다른 작업이 끝난 뒤 장면 기획을 시작하세요.');
+    const task={threadId:null,turnId:null,cancelPromise:null};
+    this.active.add(task);
+    let listener,failure,abort,timer,finished=false;
+    try{
+      signal?.throwIfAborted();
+      await this.start();
+      const result=await this.rpc('account/read',{refreshToken:false});
+      if(result.account?.type!=='chatgpt')throw new Error('AI 연결에서 ChatGPT 계정으로 로그인하세요.');
+      signal?.throwIfAborted();
+      const {thread}=await this.rpc('thread/start',{
+        cwd:this.home,ephemeral:true,approvalPolicy:'never',sandbox:'read-only',
+        baseInstructions:'You plan still-image batches as text only. Do not use tools or generate images. Return the requested JSON object.',
+        developerInstructions:'Give each image one genuinely distinct scene in the requested dimension. Follow the user brief and preserve fixed character, setting, composition and other constraints. Vary only what the brief requests or leaves open. Each entry is a concise scene direction in the language of the brief. Do not include card numbers or refer to other generated images.'
+      });
+      task.threadId=thread.id;
+      let lastMessage='';
+      const completion=new Promise((resolve,reject)=>{
+        failure=reject;
+        listener=message=>{
+          if(message.params?.threadId!==thread.id)return;
+          const {item,turn}=message.params;
+          if(message.method==='item/completed'&&item?.type==='agentMessage')lastMessage=item.text;
+          if(message.method!=='turn/completed')return;
+          finished=true;
+          if(turn.status!=='completed'){reject(new Error(turn.error?.message||'장면 기획을 완료하지 못했습니다.'));return;}
+          const final=turn.items?.filter(entry=>entry.type==='agentMessage').at(-1)?.text;
+          resolve(final||lastMessage);
+        };
+        abort=()=>reject(new Error('장면 기획이 취소됐습니다.'));
+      });
+      completion.catch(()=>{});
+      this.on('notification',listener);
+      this.on('providerError',failure);
+      signal?.addEventListener('abort',abort,{once:true});
+      timer=setTimeout(()=>failure(new Error('장면 기획 시간이 초과됐습니다. 다시 시도하세요.')),55000);
+      signal?.throwIfAborted();
+      const {turn}=await this.rpc('turn/start',{
+        threadId:thread.id,
+        input:[{type:'text',text:'Plan exactly '+count+' distinct still-image scenes. Aspect ratio: '+ratio+'. User brief:\n'+prompt}],
+        outputSchema:{type:'object',properties:{scenes:{type:'array',items:{type:'string'}}},required:['scenes'],additionalProperties:false}
+      });
+      task.turnId=turn.id;
+      const text=await completion;
+      signal?.throwIfAborted();
+      let output;
+      try{output=JSON.parse(text);}catch{throw new Error('장면 기획 결과를 읽을 수 없습니다. 다시 시도하세요.');}
+      return validateScenes(output?.scenes,count);
+    }finally{
+      clearTimeout(timer);
+      if(abort)signal?.removeEventListener('abort',abort);
+      if(listener)this.off('notification',listener);
+      if(failure)this.off('providerError',failure);
+      if(!finished&&task.turnId)await this.cancel(task).catch(()=>{});
+      if(task.threadId)await this.rpc('thread/unsubscribe',{threadId:task.threadId},3000).catch(()=>{});
+      this.active.delete(task);
+    }
+  }
   async generate(input,{signal,onProgress=()=>{},onImage=()=>{},onTiming=()=>{}}={}) {
     const clock=performance.now();
     const mark=stage=>onTiming({stage,elapsedMs:Math.round(performance.now()-clock)});

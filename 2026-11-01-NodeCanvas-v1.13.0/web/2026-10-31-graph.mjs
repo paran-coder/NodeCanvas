@@ -1,3 +1,4 @@
+import {MAX_SCENE_LENGTH} from './2026-11-10-scene-planning.mjs';
 import {cleanMentions} from './2026-11-03-image-mentions.mjs';
 import {colorSettings} from './2026-11-03-color.mjs';
 import {cleanNodeCounters} from './2026-11-01-node-numbers.mjs';
@@ -5,7 +6,7 @@ import {HAIRLOCK,validateNodeSkill,getSkill} from './2026-11-01-skills.mjs';
 export const MAX_PROJECT_BYTES=200_000_000;
 export const MAX_NODE_COUNT=150,MAX_EDGE_COUNT=500;
 const utf8=value=>new TextEncoder().encode(value).byteLength;
-function cleanData(n){return {...(n.type==='generate'?{count:Number.isInteger(n.data.count)&&n.data.count>=1&&n.data.count<=10?n.data.count:1,mode:n.data.mode==='parallel'?'parallel':'serial'}:{}),...(n.data.mentions?.length?{mentions:cleanMentions(n.data.mentions,n.data.text||'')}:{}) ,...(n.type==='color'?{color:colorSettings(n.data.color)}:{}),...(n.data.sequence!==undefined?{sequence:n.data.sequence}:{}),...(n.data.skill?{skill:n.data.skill}:{}),text:n.data.text||'',image:n.data.image||'',ratio:['1:1','3:2','2:3','16:9','9:16'].includes(n.data.ratio)?n.data.ratio:'1:1',label:String(n.type==='image'&&['참조 이미지','업로드하기'].includes(n.data.label)?'이미지 업로드':n.data.label||'').slice(0,80)};}
+function cleanData(n){return {...(n.type==='generate'?{count:Number.isInteger(n.data.count)&&n.data.count>=1&&n.data.count<=10?n.data.count:1,mode:n.data.mode==='parallel'?'parallel':'serial',...(typeof n.data.scene==='string'&&n.data.scene?{scene:n.data.scene.trim().slice(0,MAX_SCENE_LENGTH)}:{})}:{}),...(n.data.mentions?.length?{mentions:cleanMentions(n.data.mentions,n.data.text||'')}:{}) ,...(n.type==='color'?{color:colorSettings(n.data.color)}:{}),...(n.data.sequence!==undefined?{sequence:n.data.sequence}:{}),...(n.data.skill?{skill:n.data.skill}:{}),text:n.data.text||'',image:n.data.image||'',ratio:['1:1','3:2','2:3','16:9','9:16'].includes(n.data.ratio)?n.data.ratio:'1:1',label:String(n.type==='image'&&['참조 이미지','업로드하기'].includes(n.data.label)?'이미지 업로드':n.data.label||'').slice(0,80)};}
 export function projectBytes(graph){let images=0;const nodes=graph.nodes.map(n=>{const data=cleanData(n);images+=data.image.length;data.image='';return {id:n.id,type:n.type,x:n.x,y:n.y,data};});return utf8(JSON.stringify({version:'1.0.0',name:String(graph.name||'이름 없는 워크플로').slice(0,80),...(graph.nodeCounters?{nodeCounters:cleanNodeCounters(graph.nodeCounters)}:{}),nodes,edges:graph.edges.map(e=>({id:e.id,from:e.from,to:e.to}))}))+images;}
 export const TYPES = {
   skill: {label:'스킬',icon:'🧩',color:'#f4d4a0',output:'skill'},
