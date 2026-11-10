@@ -551,7 +551,14 @@ function wirePair(a,b){if(!a||!b||a.direction===b.direction)return null;return a
 function resetHighlight(){document.querySelectorAll('.port.hover-compatible').forEach(el=>el.classList.remove('hover-compatible'));}
 $('viewport').addEventListener('pointerdown',event=>{
   if(event.button!==0||event.isPrimary===false)return;
-  if(tool==='pan'||spaceHeld){closeMenus();drag={kind:'pan',blank:!event.target.closest('[data-node],[data-edge],button'),startX:event.clientX,startY:event.clientY,x:view.x,y:view.y,moved:false};$('viewport').setPointerCapture(event.pointerId);event.preventDefault();return;}
+  if(tool==='pan'||spaceHeld){
+    const viewport=$('viewport');
+    // Moving focus cancels the zoom button's pending Space activation.
+    if(spaceHeld&&document.activeElement?.closest('.view-controls'))viewport.focus({preventScroll:true});
+    closeMenus();
+    drag={kind:'pan',blank:!event.target.closest('[data-node],[data-edge],button'),startX:event.clientX,startY:event.clientY,x:view.x,y:view.y,moved:false};
+    viewport.setPointerCapture(event.pointerId);event.preventDefault();return;
+  }
   const field=event.target.closest('input,textarea,select');
   if(field){const id=field.closest('[data-node]')?.dataset.node;if(event.ctrlKey||event.metaKey){event.preventDefault();toggleSelection(id);}else if(!selectedIds.has(id))select(id);return;}
   const port=pointerPort(event.target);
@@ -923,6 +930,10 @@ document.addEventListener('pointerdown',event=>{if(event.target.closest('.refere
 },true);
 document.addEventListener('pointerdown',event=>{if(!event.target.closest('#node-menu,#action-menu,#template-menu,#add-node,#templates-open,.port,.mention-menu,.card-choice-menu,[data-card-menu],[data-reference-add]'))closeMenus();});
 $('zoom-in').onclick=()=>zoom(1.15);$('zoom-out').onclick=()=>zoom(1/1.15);$('zoom-reset').onclick=()=>zoom(1/view.scale);$('fit-view').onclick=fitView;
+document.querySelector('.view-controls').addEventListener('click',event=>{
+  const button=event.target.closest('button');
+  if(event.detail>0&&button===document.activeElement)button.blur();
+});
 $('project-name').oninput=event=>{if(!editable()){event.target.value=project.name;return;}project.name=event.target.value;checkpoint('project-name');scheduleSave();};
 $('export-project').onclick=exportProject;
 $('open-project').onclick=()=>{if(editable()){$('project-file').value='';$('project-file').click();}};
