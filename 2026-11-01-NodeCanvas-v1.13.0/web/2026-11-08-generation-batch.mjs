@@ -13,7 +13,7 @@ function nodeHeight(node,heights){
 }
 
 export function createGenerationBatch(project,target,count,{id=()=>crypto.randomUUID(),heights={}}={}){
-  if(!Number.isInteger(count)||count<1||count>4)throw Error('한 번에 1~4장을 선택하세요.');
+  if(!Number.isInteger(count)||count<1||count>10)throw Error('한 번에 1~10장을 선택하세요.');
   const graph=structuredClone(project),source=graph.nodes.find(node=>node.id===target);
   if(!source||source.type!=='generate')throw Error('이미지 생성 노드에서 장수를 선택하세요.');
   if(graph.nodes.length+count-1>MAX_NODE_COUNT)throw Error('노드는 150개까지 추가할 수 있습니다.');
@@ -33,7 +33,7 @@ export function createGenerationBatch(project,target,count,{id=()=>crypto.random
       if(clear){location={x:Math.round(x),y:Math.round(y)};break;}
     }
     if(!location)throw Error('새 이미지 노드를 놓을 공간을 확보하세요.');
-    const data={...structuredClone(source.data),image:'',count:1,label:(source.data.label||'이미지 생성').slice(0,75)+' ('+(index+1)+')'};
+    const data={...structuredClone(source.data),image:'',count:1,mode:'serial',label:(source.data.label||'이미지 생성').slice(0,75)+' ('+(index+1)+')'};
     delete data.sequence;
     const clone={id:id(),type:'generate',...location,data};
     assignNodeNumber(graph,clone);

@@ -46,6 +46,19 @@
           "value": "no-store"
         }
       ]
+    },
+    {
+      "source": "/2026-11-10-NodeCanvas-Setup-v1.13.1.exe",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/octet-stream"
+        },
+        {
+          "key": "Content-Disposition",
+          "value": "attachment; filename=\"2026-11-10-NodeCanvas-Setup-v1.13.1.exe\""
+        }
+      ]
     }
   ]
 }

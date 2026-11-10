@@ -1,6 +1,7 @@
-// One connector job at a time. All task ownership is explicit and independent of the visible project.
+// Explicitly grouped tasks can run together. Other tasks retain FIFO execution.
 export class TaskQueue {
-  constructor({execute,cancel=async()=>{},onChange=()=>{},limit=8}){Object.assign(this,{execute,cancelRun:cancel,onChange,limit,items:[],active:null,scheduled:false,waiters:[]});}
+  constructor({execute,cancel=async()=>{},onChange=()=>{},limit=10}){Object.assign(this,{execute,cancelRun:cancel,onChange,limit,items:[],running:new Map(),scheduled:false,waiters:[]});}
+  get active(){return this.running.values().next().value||null;}
   get pending(){return this.items.filter(t=>['queued','running','cancelling'].includes(t.state));}
   hasProject(id){return this.pending.some(t=>t.projectId===id);}
   locked(projectId,nodeId){return this.pending.some(t=>t.projectId===projectId&&t.nodeIds.includes(nodeId));}
@@ -28,13 +29,21 @@ export class TaskQueue {
     this.schedule();
     return items;
   }
-  schedule(){if(this.scheduled||this.active)return;this.scheduled=true;queueMicrotask(()=>{this.scheduled=false;void this.drain();});}
-  async drain(){
-    if(this.active)return;const task=this.items.find(t=>t.state==='queued');if(!task){this.waiters.splice(0).forEach(r=>r());return;}
-    this.active=task;task.state='running';task.startedAt=Date.now();this.emit(task);
+  schedule(){if(this.scheduled)return;this.scheduled=true;queueMicrotask(()=>{this.scheduled=false;this.drain();});}
+  drain(){
+    const queued=this.items.filter(task=>task.state==='queued');
+    for(const task of queued){
+      const first=this.active;
+      if(first&&(!first.parallelGroup||first.parallelGroup!==task.parallelGroup))break;
+      void this.run(task);
+    }
+    if(!this.pending.length)this.waiters.splice(0).forEach(resolve=>resolve());
+  }
+  async run(task){
+    this.running.set(task.id,task);task.state='running';task.startedAt=Date.now();this.emit(task);
     try{await this.execute(task,task.controller.signal);task.state=task.controller.signal.aborted?'cancelled':'completed';}
     catch(error){task.state=task.controller.signal.aborted?'cancelled':'failed';task.error=error.message||String(error);}
-    finally{task.finishedAt=Date.now();this.active=null;task.snapshot=null;task.controller=null;while(this.items.length>30){const index=this.items.findIndex(t=>!['queued','running','cancelling'].includes(t.state)&&!t.unsavedImage);if(index<0)break;this.items.splice(index,1);}this.emit(task);this.schedule();}
+    finally{task.finishedAt=Date.now();this.running.delete(task.id);task.snapshot=null;task.controller=null;while(this.items.length>30){const index=this.items.findIndex(t=>!['queued','running','cancelling'].includes(t.state)&&!t.unsavedImage);if(index<0)break;this.items.splice(index,1);}this.emit(task);this.schedule();}
   }
   async cancel(id){const task=this.items.find(t=>t.id===id);if(!task)return;if(task.state==='queued'){task.state='cancelled';task.finishedAt=Date.now();task.snapshot=null;task.controller=null;this.emit(task);this.schedule();return;}if(task.state!=='running')return;task.controller.abort();task.state='cancelling';this.emit(task);await this.cancelRun(task);}
   idle(){if(!this.pending.length&&!this.active)return Promise.resolve();return new Promise(resolve=>this.waiters.push(resolve));}
