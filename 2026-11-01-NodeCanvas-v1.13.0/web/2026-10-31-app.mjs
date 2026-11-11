@@ -624,7 +624,7 @@ $('viewport').addEventListener('pointerup',event=>{
   const finished=drag;drag=null;hideMarquee();
   if($('viewport').hasPointerCapture(event.pointerId))$('viewport').releasePointerCapture(event.pointerId);
   if(!finished)return;
-  if(finished.kind==='pan'&&!finished.moved&&finished.blank)select(null);
+  if(finished.kind==='pan'&&!finished.moved){if(tool==='pan')setTool('select');if(finished.blank)select(null);}
   if(uploadClick(finished)){suppressClickUntil=performance.now()+200;resetHighlight();chooseImage(finished.id);return;}
   if(finished.moved)suppressClickUntil=performance.now()+200;
   if(finished.kind==='node'&&finished.moved){checkpoint();scheduleSave();}
@@ -929,7 +929,7 @@ function showNodeHelp(type){
   $('node-help-tip').hidden=!help.tip;
   $('node-help-dialog').showModal();
 }
-function setTool(next){cancelWire();tool=next;$('viewport').classList.toggle('pan-mode',tool==='pan');$('select-tool').setAttribute('aria-pressed',String(tool==='select'));$('pan-tool').setAttribute('aria-pressed',String(tool==='pan'));}
+function setTool(next){cancelWire();tool=next;$('viewport').classList.toggle('pan-mode',tool==='pan'||spaceHeld);$('select-tool').setAttribute('aria-pressed',String(tool==='select'));$('pan-tool').setAttribute('aria-pressed',String(tool==='pan'));}
 $('select-tool').onclick=()=>setTool('select');$('pan-tool').onclick=()=>setTool('pan');
 $('menu-items').onclick=event=>{if(event.target.closest('[data-open-skills]')){menuCategory='skill';renderMenu();$('menu-items').querySelector('button')?.focus();return;}const button=event.target.closest('[data-add]');if(button)addNode(button.dataset.add,button.dataset.skillId);};
 $('node-menu').onkeydown=event=>{
@@ -1013,10 +1013,11 @@ $('zip-selection').onclick=()=>exportSelection('zip');
 $('sheet-selection').onclick=()=>exportSelection('sheet');
 const selectionExportMenu=$('selection-export-menu');
 document.addEventListener('pointerdown',event=>{
- if(selectionExportMenu.contains(event.target))return;
- const focused=document.activeElement;
- selectionExportMenu.open=false;
- if(selectionExportMenu.contains(focused))focused.blur();
+ if(!event.isPrimary||event.button!==0)return;
+ const target=event.target,focused=document.activeElement;
+ if(!selectionExportMenu.contains(target))selectionExportMenu.open=false;
+ if(focused?.matches('button,summary,[role="button"]')&&!focused.contains(target))focused.blur();
+ if(tool==='pan'&&!target.closest('#pan-tool,#viewport'))setTool('select');
 });
 selectionExportMenu.addEventListener('keydown',event=>{
  if(event.key!=='Escape'||!selectionExportMenu.open)return;
