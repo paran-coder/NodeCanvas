@@ -279,9 +279,9 @@ function selectedImages(){
 let exportingSelection=false;
 function renderSelectionActions(){
  const images=selectedImages();
- $('selection-actions').hidden=images.length<2;
- $('zip-selection').disabled=exportingSelection;
- $('sheet-selection').disabled=exportingSelection;
+ $('selection-export-hint').hidden=images.length>=2;
+ $('zip-selection').disabled=exportingSelection||images.length<2;
+ $('sheet-selection').disabled=exportingSelection||images.length<2;
 }
 function paintSelection(){document.querySelectorAll('.node').forEach(el=>el.classList.toggle('selected',selectedIds.has(el.dataset.node)));renderSelectionActions();}
 async function exportSelection(format){
@@ -292,7 +292,7 @@ async function exportSelection(format){
  exportingSelection=true;renderSelectionActions();
  try{
   const blob=format==='zip'?createImageZip(images):await createComparisonSheet(images);
-  downloadBlob(blob,name+(format==='zip'?'-선택이미지.zip':'-비교시트.png'));
+  selectionExportMenu.open=false;downloadBlob(blob,name+(format==='zip'?'-선택이미지.zip':'-비교시트.png'));
  }catch(error){notify(error.message||'이미지를 내보내지 못했습니다.',true);}
  finally{exportingSelection=false;renderSelectionActions();}
 }
@@ -1012,6 +1012,15 @@ $('logout-button').onclick=async()=>{if(!confirm('NodeCanvas 앱 전용 ChatGPT 
 $('run-all').onclick=()=>runWorkflow();
 $('zip-selection').onclick=()=>exportSelection('zip');
 $('sheet-selection').onclick=()=>exportSelection('sheet');
+const selectionExportMenu=$('selection-export-menu');
+document.addEventListener('pointerdown',event=>{
+ if(!selectionExportMenu.contains(event.target))selectionExportMenu.open=false;
+});
+selectionExportMenu.addEventListener('keydown',event=>{
+ if(event.key!=='Escape'||!selectionExportMenu.open)return;
+ event.preventDefault();event.stopPropagation();
+ selectionExportMenu.open=false;selectionExportMenu.querySelector('summary').focus();
+});
 $('cancel-run').onclick=()=>{const active=[...taskQueue.running.values()].filter(task=>task.projectId===activeSpaceId);if(active.length>1){setTaskPanelOpen(true);$('task-toggle').focus();}else if(active.length)void taskQueue.cancel(active[0].id).catch(error=>notify(error.message,true));};
 $('history-toggle').onclick=()=>{$('history-list').hidden=!$('history-list').hidden;};
 document.addEventListener('keydown',event=>{
