@@ -39,6 +39,19 @@
       ]
     },
     {
+      "source": "/2026-10-31-NodeCanvas-Setup-v1.14.2.exe",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/octet-stream"
+        },
+        {
+          "key": "Content-Disposition",
+          "value": "attachment; filename=\"2026-10-31-NodeCanvas-Setup-v1.14.2.exe\""
+        }
+      ]
+    },
+    {
       "source": "/2026-11-01-update.json",
       "headers": [
         {
