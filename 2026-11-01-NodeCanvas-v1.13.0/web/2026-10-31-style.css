@@ -231,3 +231,7 @@ body:not(.show-library){height:100dvh;display:flex;flex-direction:column}body:no
 @media(hover:none){.node .reference-asset button{opacity:1}}
 
 .planned-scene{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:1.3;opacity:.85}
+
+.selection-actions{position:absolute;z-index:2;left:24px;bottom:108px;display:flex;flex-wrap:wrap;gap:6px;max-width:calc(100% - 48px);padding:6px;background:#fff;border:1px solid #d9dce3;border-radius:10px}
+.selection-actions .button{min-height:32px;font-size:12px;padding:0 9px}
+@media(min-width:651px){.selection-actions{left:165px}}
