@@ -279,7 +279,6 @@ function selectedImages(){
 let exportingSelection=false;
 function renderSelectionActions(){
  const images=selectedImages();
- $('selection-export-hint').hidden=images.length>=2;
  $('zip-selection').disabled=exportingSelection||images.length<2;
  $('sheet-selection').disabled=exportingSelection||images.length<2;
 }
@@ -1014,7 +1013,10 @@ $('zip-selection').onclick=()=>exportSelection('zip');
 $('sheet-selection').onclick=()=>exportSelection('sheet');
 const selectionExportMenu=$('selection-export-menu');
 document.addEventListener('pointerdown',event=>{
- if(!selectionExportMenu.contains(event.target))selectionExportMenu.open=false;
+ if(selectionExportMenu.contains(event.target))return;
+ const focused=document.activeElement;
+ selectionExportMenu.open=false;
+ if(selectionExportMenu.contains(focused))focused.blur();
 });
 selectionExportMenu.addEventListener('keydown',event=>{
  if(event.key!=='Escape'||!selectionExportMenu.open)return;

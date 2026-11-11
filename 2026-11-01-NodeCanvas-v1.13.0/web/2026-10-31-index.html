@@ -32,7 +32,7 @@
 <header class="app-header">
   <button id="spaces-home" class="icon-button" aria-label="프로젝트 목록으로" title="프로젝트 목록으로">‹</button>
   <a class="brand" href="/" aria-label="NodeCanvas 홈"><span class="brand-mark">N</span><span>nodecanvas<span class="brand-dot">.</span></span></a>
-  <span class="header-divider"></span><div class="project-heading"><span class="workspace-label">개인 프로젝트 <span>›</span></span><input id="project-name" aria-label="프로젝트 이름" maxlength="80" value="첫 번째 이미지 워크플로"></div><span class="version">v1.20.2</span>
+  <span class="header-divider"></span><div class="project-heading"><span class="workspace-label">개인 프로젝트 <span>›</span></span><input id="project-name" aria-label="프로젝트 이름" maxlength="80" value="첫 번째 이미지 워크플로"></div><span class="version">v1.20.3</span>
   <div class="header-actions"><span id="save-state" class="save-state" role="status">자동 저장 준비</span><button id="retry-save" class="button secondary" hidden>저장 재시도</button><button id="undo-edit" class="icon-button" aria-label="실행 취소" title="실행 취소 (Ctrl+Z)" disabled>↶</button><button id="redo-edit" class="icon-button" aria-label="다시 실행" title="다시 실행 (Ctrl+Shift+Z)" disabled>↷</button><button id="open-project" class="button quiet">열기</button><button id="export-project" class="button quiet">저장 ↗</button><a class="button secondary manual-link" href="/2026-10-31-guide.html" target="_blank" rel="noopener noreferrer">사용 설명서 ↗</a><button id="connect-open" class="button connection"><span class="status-dot" id="connection-dot"></span><span id="connection-label">AI 연결</span><span id="update-badge" class="tag" hidden>업데이트</span></button><button id="cancel-run" class="button danger" hidden>취소</button><button id="run-all" class="button primary"><span>▶</span> 전체 실행</button></div>
 </header>
 <section id="spaces-page" class="spaces-page" aria-label="프로젝트 관리">
@@ -54,9 +54,8 @@
 <button id="pan-tool" class="tool-button" aria-label="화면 이동 도구" title="화면 이동 (H)" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 13V6a1.5 1.5 0 0 1 3 0v6-8a1.5 1.5 0 0 1 3 0v8-6a1.5 1.5 0 0 1 3 0v8-3a1.5 1.5 0 0 1 3 0v6c0 4-3 6-6 6-4 0-5-2-7-4L4 13c-1-2 1-3 2-2Z"/></svg></button><span class="toolbar-divider"></span>
 <button id="templates-open" class="tool-button" aria-label="시작 템플릿" title="시작 템플릿" aria-haspopup="menu">▦</button><button id="help-open" class="tool-button" aria-label="사용 방법 보기" title="사용 방법">?</button>
 <details id="selection-export-menu" class="selection-export-menu">
-  <summary class="tool-button" aria-label="이미지 내보내기" title="이미지 내보내기">↧</summary>
+  <summary class="tool-button" aria-label="이미지 내보내기" title="이미지 내보내기"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 8H5v12h12v-5M12 12l7-7m-5 0h5v5"/></svg></summary>
   <div id="selection-actions" class="selection-actions" role="group" aria-label="선택한 이미지 내보내기">
-    <p id="selection-export-hint">이미지 카드를 두 장 이상 선택하세요.</p>
     <button id="zip-selection" class="button secondary" type="button" disabled>원본 ZIP</button>
     <button id="sheet-selection" class="button secondary" type="button" disabled>비교 시트</button>
   </div>
