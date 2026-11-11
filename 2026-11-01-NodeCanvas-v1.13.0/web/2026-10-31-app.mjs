@@ -276,13 +276,10 @@ function changed(){checkpoint();renderAll();scheduleSave();}
 function selectedImages(){
  return project.nodes.filter(node=>selectedIds.has(node.id)&&isImage(node.data.image));
 }
-function canRegenerate(node){return ['generate','edit'].includes(node.type)&&isImage(node.data.image);}
 let exportingSelection=false;
 function renderSelectionActions(){
- const images=selectedImages(),targets=images.filter(canRegenerate);
- $('selection-actions').hidden=!images.length;
- $('rerun-selection').hidden=!targets.length;
- $('rerun-selection').disabled=planningScenes||targets.some(node=>nodeLocked(node.id));
+ const images=selectedImages();
+ $('selection-actions').hidden=images.length<2;
  $('zip-selection').disabled=exportingSelection;
  $('sheet-selection').disabled=exportingSelection;
 }
@@ -290,7 +287,7 @@ function paintSelection(){document.querySelectorAll('.node').forEach(el=>el.clas
 async function exportSelection(format){
  if(exportingSelection)return;
  const images=selectedImages().map(node=>({label:nodeLabel(node,TYPES[node.type].label),data:node.data.image}));
- if(!images.length)return;
+ if(images.length<2)return;
  const name=safeFileLabel(project.name);
  exportingSelection=true;renderSelectionActions();
  try{
@@ -453,7 +450,7 @@ async function storeTaskImage(task,node,image){
 }
 
 let planningScenes=false;
-async function runWorkflow(target,selection){
+async function runWorkflow(target){
  if(planningScenes)return notify('장면을 기획하고 있습니다. 잠시 기다려 주세요.');
  if(applyingUpdate||!activeSpaceId)return;
  const originId=activeSpaceId,originSession=projectSession;
@@ -463,9 +460,6 @@ async function runWorkflow(target,selection){
   if(activeSpaceId!==originId||projectSession!==originSession||planningScenes)return;
   await persistCurrent();
   if(activeSpaceId!==originId||projectSession!==originSession)return;
-  const selectedTargets=selection?.filter(id=>project.nodes.some(node=>node.id===id&&canRegenerate(node)));
-  if(selection&&!selectedTargets.length)return;
-  if(selectedTargets?.some(nodeLocked))throw new Error('실행 또는 대기 중인 카드가 있습니다.');
   const source=project.nodes.find(node=>node.id===target);
   const count=source?.type==='generate'?(source.data.count||1):1;
   const parallel=count>1&&source.data.mode==='parallel';
@@ -473,7 +467,7 @@ async function runWorkflow(target,selection){
     throw new Error('동시 생성에는 연결 앱 v1.13.1 이상이 필요합니다. AI 연결에서 설치 앱을 내려받으세요.');
   }
   const parallelGroup=parallel?uuid():null;
-  let candidate=project,targets=selectedTargets||[target];
+  let candidate=project,targets=[target];
   if(target&&count>1){
     const heights=Object.fromEntries([...document.querySelectorAll('[data-node]')].map(el=>[el.dataset.node,el.offsetHeight]));
     ({graph:candidate,targets}=createGenerationBatch(project,target,count,{heights}));
@@ -481,11 +475,9 @@ async function runWorkflow(target,selection){
   const tasks=targets.map(id=>{
     const snapshot=structuredClone(candidate),{order,reused}=executionPlan(snapshot,id);
     const writeIds=order.filter(key=>!reused.has(key)&&['generate','edit'].includes(snapshot.nodes.find(node=>node.id===key).type));
-    if(selectedTargets&&writeIds.some(key=>key!==id))throw new Error('비어 있는 참조 카드의 이미지를 먼저 생성하세요.');
-    const nodeIds=selectedTargets?order.filter(key=>!reused.has(key)||!selectedTargets.includes(key)):order;
     return {id:uuid(),projectId:activeSpaceId,projectName:candidate.name,
       label:id?nodeLabel(snapshot.nodes.find(node=>node.id===id),'선택 생성'):'전체 워크플로',
-      snapshot,order,reused,nodeIds,writeIds,parallelGroup};
+      snapshot,order,reused,nodeIds:order,writeIds,parallelGroup};
   });
   if(tasks.every(task=>!task.order.length))return notify('노드를 먼저 추가하세요.');
   if(tasks.some(task=>task.writeIds.length)&&(!bridge.connected||!bridge.account)){
@@ -502,7 +494,7 @@ async function runWorkflow(target,selection){
       if(!bridge.scenePlanning)throw new Error('장면별 기획에는 연결 앱 v1.14.0이 필요합니다. AI 연결에서 설치 앱을 내려받으세요.');
       if(taskQueue.pending.length)throw new Error('실행·대기 중인 작업을 마친 뒤 장면을 기획하세요.');
       const base=project,revision=editHistory.states[editHistory.index];
-      requestedPlan=planningScenes=true;renderSelectionActions();
+      requestedPlan=planningScenes=true;
       notify(count+'개의 서로 다른 장면을 기획하고 있습니다.');
       release();release=null;
       const response=await api('scene-plan',{prompt:brief,count,ratio:nodeRatio(source)},false,75000);
@@ -530,14 +522,13 @@ async function runWorkflow(target,selection){
     checkpoint();renderAll();
   }
   taskQueue.addMany(tasks);
-  if(selectedTargets)return notify(tasks.length+'개 카드의 재생성을 등록했습니다.');
   notify(count>1?count+'장 '+(parallel?'동시':'순차')+' 생성을 등록했습니다. 완료된 이미지는 각 노드에 저장됩니다.':'작업을 등록했습니다.');
  }catch(error){
   if(beforeBatch){project=beforeBatch;scheduleSave();renderAll();}
   notify(error.message,true);
  }finally{
   if(staging){document.querySelector('.workspace').inert=false;document.querySelector('.app-header').inert=false;}
-  if(requestedPlan){planningScenes=false;renderSelectionActions();}
+  if(requestedPlan)planningScenes=false;
   release?.();
  }
 }
@@ -1019,7 +1010,6 @@ $('login-button').onclick=async()=>{
 };
 $('logout-button').onclick=async()=>{if(!confirm('NodeCanvas 앱 전용 ChatGPT 계정에서 로그아웃할까요?'))return;try{await api('logout');bridge.account=null;renderConnection();connectionMessage('앱 전용 계정에서 로그아웃했습니다.');}catch(error){connectionMessage(error.message,true);}};
 $('run-all').onclick=()=>runWorkflow();
-$('rerun-selection').onclick=()=>runWorkflow(undefined,selectedImages().filter(canRegenerate).map(node=>node.id));
 $('zip-selection').onclick=()=>exportSelection('zip');
 $('sheet-selection').onclick=()=>exportSelection('sheet');
 $('cancel-run').onclick=()=>{const active=[...taskQueue.running.values()].filter(task=>task.projectId===activeSpaceId);if(active.length>1){setTaskPanelOpen(true);$('task-toggle').focus();}else if(active.length)void taskQueue.cancel(active[0].id).catch(error=>notify(error.message,true));};
