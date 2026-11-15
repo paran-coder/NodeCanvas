@@ -74,6 +74,7 @@ function updateView(){
   $('zoom-label').textContent=Math.round(view.scale*100)+'%';
   $('viewport').style.backgroundSize=`${24*view.scale}px ${24*view.scale}px`;
   $('viewport').style.backgroundPosition=`${view.x}px ${view.y}px`;
+  placeSelectionToolbar();
 }
 function fitView(){
   if(!project.nodes.length){view={x:0,y:0,scale:1};return updateView();}
@@ -284,19 +285,69 @@ function groupMembers(id){
  const groupId=project.nodes.find(node=>node.id===id)?.groupId;
  return groupId?project.nodes.filter(node=>node.groupId===groupId).map(node=>node.id):[id];
 }
-function renderGroupFrames(){
- const bounds=new Map();
- for(const node of project.nodes){
-  if(!node.groupId)continue;
+const groupPadding=16;
+function cardBounds(nodes){
+ let bounds=null;
+ for(const node of nodes){
   const el=document.querySelector(`[data-node="${node.id}"]`);
   if(!el)continue;
-  const box=bounds.get(node.groupId)||[Infinity,Infinity,-Infinity,-Infinity];
-  bounds.set(node.groupId,[Math.min(box[0],node.x),Math.min(box[1],node.y),
-   Math.max(box[2],node.x+el.offsetWidth),Math.max(box[3],node.y+el.offsetHeight)]);
+  const rect=el.getBoundingClientRect();
+  const parts=[rect,...[...el.querySelectorAll('.node-header,.port')].map(part=>part.getBoundingClientRect())];
+  const {scale}=view;
+  const left=node.x+Math.floor((Math.min(...parts.map(part=>part.left))-rect.left)/scale);
+  const top=node.y+Math.floor((Math.min(...parts.map(part=>part.top))-rect.top)/scale);
+  const right=node.x+Math.ceil((Math.max(...parts.map(part=>part.right))-rect.left)/scale);
+  const bottom=node.y+Math.ceil((Math.max(...parts.map(part=>part.bottom))-rect.top)/scale);
+  bounds=bounds?{
+   left:Math.min(bounds.left,left),top:Math.min(bounds.top,top),
+   right:Math.max(bounds.right,right),bottom:Math.max(bounds.bottom,bottom)
+  }:{left,top,right,bottom};
  }
- $('card-groups').innerHTML=[...bounds.values()].map(([x,y,right,bottom])=>
-  `<div class="card-group-frame" style="left:${x-12}px;top:${y-12}px;width:${right-x+24}px;height:${bottom-y+24}px"></div>`
+ if(!bounds)return null;
+ return {left:bounds.left-groupPadding,top:bounds.top-groupPadding,
+  width:bounds.right-bounds.left+2*groupPadding,height:bounds.bottom-bounds.top+2*groupPadding};
+}
+function frameStyle(bounds){
+ return Object.entries(bounds).map(([key,value])=>`${key}:${value}px`).join(';');
+}
+function isSingleGroup(nodes){
+ return Boolean(nodes[0]?.groupId&&nodes.every(node=>node.groupId===nodes[0].groupId));
+}
+function renderGroupFrames(){
+ const groups=new Map();
+ for(const node of project.nodes){
+  if(!node.groupId)continue;
+  if(!groups.has(node.groupId))groups.set(node.groupId,[]);
+  groups.get(node.groupId).push(node);
+ }
+ $('card-groups').innerHTML=[...groups.values()].map(cardBounds).filter(Boolean).map(bounds=>
+  `<div class="card-group-frame" style="${frameStyle(bounds)}"></div>`
  ).join('');
+ renderSelectionOutline();
+}
+let selectionBounds=null;
+function renderSelectionOutline(){
+ const nodes=selectedNodes(),outline=$('selection-outline');
+ selectionBounds=nodes.length>1?cardBounds(nodes):null;
+ outline.hidden=!selectionBounds||isSingleGroup(nodes);
+ if(!outline.hidden)outline.style.cssText=frameStyle(selectionBounds);
+ placeSelectionToolbar();
+}
+function placeSelectionToolbar(){
+ const menu=$('selection-layout'),viewport=$('viewport');
+ if(!selectionBounds){menu.hidden=true;return;}
+ const {left,top,width,height}=selectionBounds;
+ const x=view.x+left*view.scale,y=view.y+top*view.scale;
+ const right=x+width*view.scale,bottom=y+height*view.scale;
+ menu.hidden=right<0||x>viewport.clientWidth||bottom<0||y>viewport.clientHeight;
+ if(menu.hidden)return;
+ const halfWidth=menu.offsetWidth/2,halfHeight=menu.offsetHeight/2;
+ const margin=6;
+ const center=(x+right)/2;
+ const above=y-menu.offsetHeight>=margin;
+ const target=above?y-halfHeight:bottom+halfHeight;
+ menu.style.left=Math.max(halfWidth+margin,Math.min(center,viewport.clientWidth-halfWidth-margin))+'px';
+ menu.style.top=Math.max(halfHeight+margin,Math.min(target,viewport.clientHeight-halfHeight-margin))+'px';
 }
 function changeSelectionGroup(ungroup){
  const nodes=selectedNodes();
@@ -363,13 +414,12 @@ for(const mode of ['horizontal','vertical','grid'])$('align-'+mode).onclick=()=>
 function renderSelectionActions(){
  const images=selectedImages();
  const nodes=selectedNodes();
- $('selection-layout').hidden=nodes.length<2;
- $('group-selection').disabled=nodes.length<2||Boolean(nodes[0]?.groupId&&nodes.every(node=>node.groupId===nodes[0].groupId));
+ $('group-selection').disabled=nodes.length<2||isSingleGroup(nodes);
  $('ungroup-selection').disabled=!nodes.some(node=>node.groupId);
  $('zip-selection').disabled=exportingSelection||images.length<2;
  $('sheet-selection').disabled=exportingSelection||images.length<2;
 }
-function paintSelection(){document.querySelectorAll('.node').forEach(el=>el.classList.toggle('selected',selectedIds.has(el.dataset.node)));renderSelectionActions();}
+function paintSelection(){document.querySelectorAll('.node').forEach(el=>el.classList.toggle('selected',selectedIds.has(el.dataset.node)));renderSelectionOutline();renderSelectionActions();}
 async function exportSelection(format){
  if(exportingSelection)return;
  const images=selectedImages().map(node=>({label:nodeLabel(node,TYPES[node.type].label),data:node.data.image}));
@@ -660,7 +710,7 @@ function pointerPort(element){const port=element?.closest?.('[data-input],[data-
 function wirePair(a,b){if(!a||!b||a.direction===b.direction)return null;return a.direction==='output'?{from:a.id,to:b.id,inputKind:b.kind}:{from:b.id,to:a.id,inputKind:a.kind};}
 function resetHighlight(){document.querySelectorAll('.port.hover-compatible').forEach(el=>el.classList.remove('hover-compatible'));}
 $('viewport').addEventListener('pointerdown',event=>{
-  if(event.button!==0||event.isPrimary===false)return;
+  if(event.button!==0||event.isPrimary===false||event.target.closest('#selection-layout'))return;
   if(tool==='pan'||spaceHeld){
     const viewport=$('viewport');
     // Moving focus cancels the zoom button's pending Space activation.
@@ -1129,7 +1179,7 @@ document.addEventListener('keydown',event=>{
   if(event.key.toLowerCase()==='v')setTool('select');
   if(event.key.toLowerCase()==='h')setTool('pan');
   if(event.key==='Delete'&&selectedIds.size&&!event.repeat){event.preventDefault();deleteNodes(selectedIds);}
-  if(event.code==='Space'&&!event.target.closest('#node-menu,#action-menu,#template-menu,[contenteditable],dialog')){
+  if(event.code==='Space'&&!event.target.closest('#node-menu,#action-menu,#template-menu,#selection-layout,[contenteditable],dialog')){
     spaceHeld=true;$('viewport').classList.add('pan-mode');
     if(!event.target.closest('button')||event.target.closest('button[data-action="help"]'))event.preventDefault();
   }
@@ -1138,7 +1188,7 @@ document.addEventListener('keydown',event=>{
 document.addEventListener('keyup',event=>{if(event.code==='Space')finishTemporaryPan();});
 window.addEventListener('blur',()=>{finishTemporaryPan();if(drag?.kind==='node'&&drag.moved){checkpoint();scheduleSave();}cancelWire();});
 document.addEventListener('visibilitychange',()=>{if(document.hidden){finishTemporaryPan();hideMarquee();}else void heartbeat();});
-window.addEventListener('resize',()=>closeMenus());
+window.addEventListener('resize',()=>{closeMenus();placeSelectionToolbar();});
 renderAll();historyRender();readableView();
 try{library=await initializeLibrary({beforeLeave:leaveProject,afterTransition:endTransition,canRemoveProject:id=>!taskQueue.hasProject(id),openProject:enterProject,onLibrary:releaseProject,backupProject:exportProjectRecord,notify});}catch(error){notify(error.message,true);$('spaces-grid').setAttribute('aria-busy','false');$('spaces-grid').textContent='프로젝트를 불러오지 못했습니다. 저장소 권한을 확인하고 새로고침해 주세요.';$('new-space').disabled=true;}
 $('spaces-home').onclick=()=>void library?.show().catch(error=>notify(error.message,true));
