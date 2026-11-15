@@ -244,6 +244,6 @@ body:not(.show-library){height:100dvh;display:flex;flex-direction:column}body:no
 .selection-layout .tool-button{display:grid;place-items:center;width:34px;height:32px;border-radius:6px}
 .selection-layout .tool-button:hover:not(:disabled){background:#eef0fb;color:#4655aa}
 .selection-layout .tool-button:disabled{opacity:.35;cursor:default}
-.card-group-frame,.selection-outline{position:absolute;box-sizing:border-box;border:1.5px solid #7785c3;border-radius:16px;pointer-events:none}
-.card-group-frame{background:#6375db1a}
+.card-group-frame,.selection-outline{position:absolute;box-sizing:border-box;border:2px solid #7785c3;border-radius:16px;pointer-events:none}
+.card-group-frame{background:rgb(99 117 219 / 15%)}
 .selection-outline{border-style:dashed}
