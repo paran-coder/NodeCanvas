@@ -85,9 +85,19 @@ export function collectInputs(graph, id, outputs) {
   const skills=values.flatMap(v=>v.skills||[]);
   return {...(skills.length?{skills}:{}),text:values.map(v=>v.text).filter(Boolean).join('\n\n'),images:[...new Set(values.flatMap(v=>v.images||[]))]};
 }
+export function clearSingletonGroups(nodes) {
+ const counts=new Map();
+ for(const {groupId} of nodes)if(groupId)counts.set(groupId,(counts.get(groupId)||0)+1);
+ for(const node of nodes)if(counts.get(node.groupId)===1)delete node.groupId;
+}
 export function normalizeProject(data,{allowOversized=false}={}) {
  validateGraph(data,{checkSize:!allowOversized});
  const graph={version:'1.0.0',name:String(data.name||'이름 없는 워크플로').slice(0,80),...(data.nodeCounters?{nodeCounters:cleanNodeCounters(data.nodeCounters)}:{}),nodes:data.nodes.map(n=>({id:n.id,type:n.type,x:n.x,y:n.y,data:cleanData(n)})),edges:data.edges.map(e=>({id:e.id,from:e.from,to:e.to}))};
+ graph.nodes.forEach((node,index)=>{
+  const {groupId}=data.nodes[index];
+  if(typeof groupId==='string'&&/^[\w-]{1,80}$/.test(groupId))node.groupId=groupId;
+ });
+ clearSingletonGroups(graph.nodes);
  for(const node of [...graph.nodes])if(node.type==='edit'&&node.data.skill){
   if(graph.nodes.length>=MAX_NODE_COUNT||graph.edges.length>=MAX_EDGE_COUNT)throw new Error('기존 스킬을 노드로 변환할 공간이 없습니다. 이전 버전에서 노드나 연결을 줄인 뒤 다시 열어 주세요.');
   const unique=(base,items)=>{let id=base,count=0;while(items.some(item=>item.id===id))id=base+'-'+(++count);return id;};

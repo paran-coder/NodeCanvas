@@ -11,7 +11,7 @@ import {executionPlan,requestForNode} from './2026-11-01-execution.mjs';
 import {nodeIcon,portIcon} from './2026-11-01-icons.mjs';
 import {getSkill,createSkillNodeData} from './2026-11-01-skills.mjs';
 import {initializeUpdates} from './2026-11-01-updates.mjs';
-import {TYPES,outputKind,canConnect,validateGraph,executionOrder,collectInputs,restoreProject,normalizeProject,projectJSON,projectBytes,MAX_PROJECT_BYTES,MAX_NODE_COUNT,starterProject,editProject,isImage} from './2026-10-31-graph.mjs';
+import {TYPES,outputKind,canConnect,validateGraph,executionOrder,collectInputs,restoreProject,normalizeProject,clearSingletonGroups,projectJSON,projectBytes,MAX_PROJECT_BYTES,MAX_NODE_COUNT,starterProject,editProject,isImage} from './2026-10-31-graph.mjs';
 import {CATALOG,menuEntries,NODE_HELP,authPhase,officialLoginUrl,filterCatalog,requiresMedia} from './2026-10-31-catalog.mjs';
 import {projectUsage,usageNotice} from './2026-11-01-usage.mjs';
 import {promptPresentation} from './2026-11-01-node-layout.mjs';
@@ -232,7 +232,7 @@ function skillHint(node){return nodeSkill(node)?.promptHint||'예: 얼굴과 배
 function nodeRatio(node){return nodeSkill(node)?.ratio||node.data.ratio||'1:1';}
 function hasSkill(node){return project.edges.some(e=>e.to===node.id&&project.nodes.find(n=>n.id===e.from)?.type==='skill');}
 function refreshPromptGuidance(){for(const node of project.nodes.filter(n=>['generate','edit'].includes(n.type))){const el=document.querySelector(`[data-node="${node.id}"]`);if(!el)continue;const info=promptPresentation(project,node),input=el.querySelector('textarea');el.querySelector('.prompt-sources').innerHTML=promptSources(info);input.placeholder=hasSkill(node)?skillHint(node):info.placeholder;input.setAttribute('aria-label',TYPES[node.type].label+' '+info.label);}}
-const mediaObserver=new ResizeObserver(entries=>{for(const entry of entries){const el=entry.target.closest('[data-node]');if(!el)continue;const node=project.nodes.find(n=>n.id===el.dataset.node);if(!node)continue;const inputs=portsFor(node.type).filter(p=>p.direction==='input'),center=Math.max(inputs.length===3?48:0,entry.target.offsetHeight/2),spread=32;for(const port of el.querySelectorAll('.port')){const index=inputs.findIndex(p=>p.kind===port.dataset.inputKind),offset=inputs.length===3?(index-1)*spread:port.dataset.inputKind==='prompt'?-spread:spread;port.style.setProperty('--port-y',(port.classList.contains('input')?center+offset:center)+'px');}}renderEdges();});
+const mediaObserver=new ResizeObserver(entries=>{for(const entry of entries){const el=entry.target.closest('[data-node]');if(!el)continue;const node=project.nodes.find(n=>n.id===el.dataset.node);if(!node)continue;const inputs=portsFor(node.type).filter(p=>p.direction==='input'),center=Math.max(inputs.length===3?48:0,entry.target.offsetHeight/2),spread=32;for(const port of el.querySelectorAll('.port')){const index=inputs.findIndex(p=>p.kind===port.dataset.inputKind),offset=inputs.length===3?(index-1)*spread:port.dataset.inputKind==='prompt'?-spread:spread;port.style.setProperty('--port-y',(port.classList.contains('input')?center+offset:center)+'px');}}renderEdges();renderGroupFrames();});
 function observeMedia(){refreshMentionHighlights();mediaObserver.disconnect();document.querySelectorAll('.node-content > .node-preview,.prompt-card-media,.upload-surface').forEach(el=>mediaObserver.observe(el));}
 function renderPorts(node){return portsFor(node.type).map(port=>`<button type="button" class="port ${port.direction} port-${port.kind}" style="--port-y:${portOffset(node.type,port.direction,port.kind)}px" data-${port.direction}="${esc(node.id)}" data-input-kind="${port.kind}" aria-label="${esc(TYPES[node.type].label)} ${port.label} ${port.direction==='input'?'입력':'출력'} 연결"><span class="port-icon" aria-hidden="true">${portIcon(port.kind)}</span><span class="port-caption" aria-hidden="true">${port.label}</span></button>`).join('');}
 function renderNodeTools(node){const type=TYPES[node.type];return `<div class="node-tools" role="group" aria-label="${esc(type.label)} 빠른 도구">${type.output==='image'?`<button type="button" data-action="download" aria-label="${esc(type.label)} 이미지 저장" title="이미지 저장 · AI를 다시 실행하지 않습니다" ${!isImage(displayedImage(node))?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg><span class="tool-tip">이미지 저장</span></button>`:''}<button type="button" data-action="duplicate" aria-label="${esc(type.label)} 노드 복제" title="노드 복제" ${nodeLocked(node.id)?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg><span class="tool-tip">복제</span></button><button type="button" data-action="delete" aria-label="${esc(type.label)} 노드 삭제" title="노드 삭제" ${nodeLocked(node.id)?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></svg><span class="tool-tip">삭제</span></button></div>`;}
@@ -265,7 +265,7 @@ function hydrateColorPanels(){
 function renderNodes(){
   closeMentionMenu();closeCardMenu();
   $('nodes').innerHTML=project.nodes.map(renderNodeMarkup).join('');hydrateColorPanels();
-  observeMedia();renderEdges();scheduleUsage();$('graph-stats').textContent=`${project.nodes.length}개 노드 · ${project.edges.length}개 연결`;$('empty-state').hidden=project.nodes.length>0;updatePendingPorts();
+  observeMedia();renderEdges();renderGroupFrames();scheduleUsage();$('graph-stats').textContent=`${project.nodes.length}개 노드 · ${project.edges.length}개 연결`;$('empty-state').hidden=project.nodes.length>0;updatePendingPorts();
 }
 function updatePendingPorts(){
  $('world').classList.toggle('connecting',Boolean(pendingPort));
@@ -277,8 +277,95 @@ function selectedImages(){
  return project.nodes.filter(node=>selectedIds.has(node.id)&&isImage(node.data.image));
 }
 let exportingSelection=false;
+function selectedNodes(){
+ return project.nodes.filter(node=>selectedIds.has(node.id));
+}
+function groupMembers(id){
+ const groupId=project.nodes.find(node=>node.id===id)?.groupId;
+ return groupId?project.nodes.filter(node=>node.groupId===groupId).map(node=>node.id):[id];
+}
+function renderGroupFrames(){
+ const bounds=new Map();
+ for(const node of project.nodes){
+  if(!node.groupId)continue;
+  const el=document.querySelector(`[data-node="${node.id}"]`);
+  if(!el)continue;
+  const box=bounds.get(node.groupId)||[Infinity,Infinity,-Infinity,-Infinity];
+  bounds.set(node.groupId,[Math.min(box[0],node.x),Math.min(box[1],node.y),
+   Math.max(box[2],node.x+el.offsetWidth),Math.max(box[3],node.y+el.offsetHeight)]);
+ }
+ $('card-groups').innerHTML=[...bounds.values()].map(([x,y,right,bottom])=>
+  `<div class="card-group-frame" style="left:${x-12}px;top:${y-12}px;width:${right-x+24}px;height:${bottom-y+24}px"></div>`
+ ).join('');
+}
+function changeSelectionGroup(ungroup){
+ const nodes=selectedNodes();
+ if(nodes.length<2||!editable(nodes.find(node=>nodeLocked(node.id))?.id))return;
+ if(ungroup){
+  const groups=new Set(nodes.map(node=>node.groupId).filter(Boolean));
+  if(!groups.size)return;
+  for(const node of project.nodes)if(groups.has(node.groupId))delete node.groupId;
+ }else{
+  if($('group-selection').disabled)return;
+  const groupId=uuid();
+  for(const node of nodes)node.groupId=groupId;
+ }
+ changed();
+}
+function layoutSelection(mode){
+ const nodes=selectedNodes();
+ if(nodes.length<2||!editable(nodes.find(node=>nodeLocked(node.id))?.id))return;
+ const horizontal=mode==='horizontal';
+ const columns=horizontal?nodes.length:mode==='vertical'?1:Math.ceil(Math.sqrt(nodes.length));
+ const lefts=Array(columns).fill(0),rights=Array(columns).fill(0),tops=[],bottoms=[];
+ const cards=nodes.sort((a,b)=>horizontal?a.x-b.x||a.y-b.y:a.y-b.y||a.x-b.x).map((node,index)=>{
+  const el=document.querySelector(`[data-node="${node.id}"]`);
+  const rect=el.getBoundingClientRect();
+  const ports=[...el.querySelectorAll('.port')].map(port=>port.getBoundingClientRect());
+  const extra=overhangs=>Math.ceil(Math.max(0,...overhangs)/view.scale);
+  const left=extra(ports.map(port=>rect.left-port.left)),right=extra(ports.map(port=>port.right-rect.right));
+  const top=extra(ports.map(port=>rect.top-port.top)),bottom=extra(ports.map(port=>port.bottom-rect.bottom));
+  const row=Math.floor(index/columns),column=index%columns;
+  lefts[column]=Math.max(lefts[column],left);
+  rights[column]=Math.max(rights[column],Math.ceil(rect.width/view.scale)+right);
+  tops[row]=Math.max(tops[row]||0,top);
+  bottoms[row]=Math.max(bottoms[row]||0,Math.ceil(rect.height/view.scale)+bottom);
+  return {node,row,column};
+ });
+ const offsets=sizes=>{
+  let offset=0;
+  return sizes.map(size=>{const start=offset;offset+=size+16;return start;});
+ };
+ const xs=offsets(lefts.map((left,column)=>left+rights[column]));
+ const ys=offsets(tops.map((top,row)=>top+bottoms[row]));
+ const positions=cards.map(({node,row,column})=>({node,x:xs[column]+lefts[column],y:ys[row]+tops[row]}));
+ const start=axis=>{
+  const first=Math.min(...positions.map(position=>position[axis]));
+  const last=Math.max(...positions.map(position=>position[axis]));
+  const anchor=Math.min(...nodes.map(node=>node[axis]))-first;
+  return Math.round(Math.max(-100000-first,Math.min(anchor,100000-last)));
+ };
+ const x=start('x'),y=start('y');
+ if(positions.some(position=>Math.abs(x+position.x)>100000||Math.abs(y+position.y)>100000)){
+  notify('선택한 카드가 캔버스 범위 안에 들어오도록 정렬할 수 없습니다.',true);
+  return;
+ }
+ if(positions.every(position=>position.node.x===x+position.x&&position.node.y===y+position.y))return;
+ for(const position of positions){
+  position.node.x=x+position.x;
+  position.node.y=y+position.y;
+ }
+ changed();
+}
+$('group-selection').onclick=()=>changeSelectionGroup(false);
+$('ungroup-selection').onclick=()=>changeSelectionGroup(true);
+for(const mode of ['horizontal','vertical','grid'])$('align-'+mode).onclick=()=>layoutSelection(mode);
 function renderSelectionActions(){
  const images=selectedImages();
+ const nodes=selectedNodes();
+ $('selection-layout').hidden=nodes.length<2;
+ $('group-selection').disabled=nodes.length<2||Boolean(nodes[0]?.groupId&&nodes.every(node=>node.groupId===nodes[0].groupId));
+ $('ungroup-selection').disabled=!nodes.some(node=>node.groupId);
  $('zip-selection').disabled=exportingSelection||images.length<2;
  $('sheet-selection').disabled=exportingSelection||images.length<2;
 }
@@ -295,8 +382,8 @@ async function exportSelection(format){
  }catch(error){notify(error.message||'이미지를 내보내지 못했습니다.',true);}
  finally{exportingSelection=false;renderSelectionActions();}
 }
-function select(id){selectedIds.clear();if(id)selectedIds.add(id);selected=id;paintSelection();}
-function toggleSelection(id){if(selectedIds.has(id))selectedIds.delete(id);else selectedIds.add(id);selected=selectedIds.has(id)?id:[...selectedIds].at(-1)||null;paintSelection();}
+function select(id){selectedIds.clear();if(id)groupMembers(id).forEach(member=>selectedIds.add(member));selected=id;paintSelection();}
+function toggleSelection(id){const remove=selectedIds.has(id);for(const member of groupMembers(id)){if(remove)selectedIds.delete(member);else selectedIds.add(member);}selected=selectedIds.has(id)?id:[...selectedIds].at(-1)||null;paintSelection();}
 function hideMarquee(){marquee.hidden=true;}
 function finishTemporaryPan(){spaceHeld=false;$('viewport').classList.toggle('pan-mode',tool==='pan');}
 
@@ -311,10 +398,11 @@ function deleteNodes(ids){
   const label=nodes.length===1?`“${nodeLabel(node,TYPES[node.type].label)}” 노드와 연결을 삭제할까요?`:'선택한 노드 '+nodes.length+'개와 연결을 삭제할까요?';
   if(!confirm(label))return;
   project.nodes=project.nodes.filter(node=>!targets.has(node.id));
+  clearSingletonGroups(project.nodes);
   project.edges=project.edges.filter(edge=>!targets.has(edge.from)&&!targets.has(edge.to));
   selected=null;selectedIds.clear();cancelWire();closeMenus();changed();
 }
-function duplicateNode(id){if(!editable())return;const node=project.nodes.find(n=>n.id===id);if(!node)return;if(project.nodes.length>=MAX_NODE_COUNT)return notify('노드는 150개까지 추가할 수 있습니다.',true);const copy=structuredClone(node);copy.id=uuid();copy.x+=45;copy.y+=55;try{assignNodeNumber(project,copy);}catch(error){return notify(error.message,true);}project.nodes.push(copy);selected=copy.id;selectedIds.clear();selectedIds.add(copy.id);closeMenus();changed();}
+function duplicateNode(id){if(!editable())return;const node=project.nodes.find(n=>n.id===id);if(!node)return;if(project.nodes.length>=MAX_NODE_COUNT)return notify('노드는 150개까지 추가할 수 있습니다.',true);const copy=structuredClone(node);delete copy.groupId;copy.id=uuid();copy.x+=45;copy.y+=55;try{assignNodeNumber(project,copy);}catch(error){return notify(error.message,true);}project.nodes.push(copy);selected=copy.id;selectedIds.clear();selectedIds.add(copy.id);closeMenus();changed();}
 function tryConnect(from,to,inputKind=null){
   if(!editable(from)||!editable(to))return false;
   try{project.edges.push(makeConnection(project,from,to,uuid(),inputKind));cancelWire();$('canvas-hint').textContent='연결했습니다 · 입력한 내용이 다음 노드로 전달됩니다';checkpoint();renderNodes();scheduleSave();return true;}catch(error){notify(error.message,true);return false;}
@@ -598,7 +686,7 @@ $('viewport').addEventListener('pointerdown',event=>{
     const nodeElement=event.target.closest('[data-node]');
     if(nodeElement&&!nodeDragAllowed(event.target))return;
     closeMenus();
-    if(nodeElement){if(!editable(nodeElement.dataset.node)||(selectedIds.has(nodeElement.dataset.node)&&[...selectedIds].some(nodeLocked)))return;const node=project.nodes.find(n=>n.id===nodeElement.dataset.node);if(event.ctrlKey||event.metaKey){toggleSelection(node.id);suppressClickUntil=performance.now()+200;return;}if(!selectedIds.has(node.id))select(node.id);drag={kind:'node',id:node.id,movingIds:new Set(selectedIds),positions:project.nodes.filter(n=>selectedIds.has(n.id)).map(n=>({id:n.id,x:n.x,y:n.y})),upload:selectedIds.size===1&&Boolean(event.target.closest('[data-upload-surface]')),startX:event.clientX,startY:event.clientY,moved:false};}
+    if(nodeElement){if(!editable(nodeElement.dataset.node))return;const node=project.nodes.find(n=>n.id===nodeElement.dataset.node);if(event.ctrlKey||event.metaKey){toggleSelection(node.id);suppressClickUntil=performance.now()+200;return;}if(!selectedIds.has(node.id))select(node.id);if(!editable([...selectedIds].find(nodeLocked)))return;drag={kind:'node',id:node.id,movingIds:new Set(selectedIds),positions:project.nodes.filter(n=>selectedIds.has(n.id)).map(n=>({id:n.id,x:n.x,y:n.y})),upload:selectedIds.size===1&&Boolean(event.target.closest('[data-upload-surface]')),startX:event.clientX,startY:event.clientY,moved:false};}
     else if(!event.target.closest('.node')){const base=event.ctrlKey||event.metaKey?[...selectedIds]:[];if(!base.length)select(null);drag={kind:'marquee',base,startX:event.clientX,startY:event.clientY,moved:false};}
     else{return;}
   }
@@ -617,8 +705,8 @@ $('viewport').addEventListener('pointermove',event=>{
   else if(drag.kind==='marquee'){
     if(!drag.moved)return;const left=Math.min(drag.startX,event.clientX),top=Math.min(drag.startY,event.clientY),right=Math.max(drag.startX,event.clientX),bottom=Math.max(drag.startY,event.clientY);
     Object.assign(marquee.style,{left:(left-rect.left)+'px',top:(top-rect.top)+'px',width:(right-left)+'px',height:(bottom-top)+'px'});marquee.hidden=false;
-    selectedIds.clear();drag.base.forEach(id=>selectedIds.add(id));document.querySelectorAll('.node').forEach(el=>{const r=el.getBoundingClientRect();if(r.right>=left&&r.left<=right&&r.bottom>=top&&r.top<=bottom)selectedIds.add(el.dataset.node);});selected=[...selectedIds].at(-1)||null;paintSelection();
-  }else{const positions=drag.positions;let moveX=dx/view.scale,moveY=dy/view.scale;moveX=Math.max(...positions.map(p=>-100000-p.x),Math.min(moveX,...positions.map(p=>100000-p.x)));moveY=Math.max(...positions.map(p=>-100000-p.y),Math.min(moveY,...positions.map(p=>100000-p.y)));for(const origin of positions){const node=project.nodes.find(n=>n.id===origin.id);if(!node)continue;node.x=Math.round(origin.x+moveX);node.y=Math.round(origin.y+moveY);const element=document.querySelector(`[data-node="${node.id}"]`);if(element){element.style.left=node.x+'px';element.style.top=node.y+'px';}}moveEdgePaths(drag.movingIds);}
+    selectedIds.clear();drag.base.forEach(id=>selectedIds.add(id));document.querySelectorAll('.node').forEach(el=>{const r=el.getBoundingClientRect();if(r.right>=left&&r.left<=right&&r.bottom>=top&&r.top<=bottom)groupMembers(el.dataset.node).forEach(id=>selectedIds.add(id));});selected=[...selectedIds].at(-1)||null;paintSelection();
+  }else{const positions=drag.positions;let moveX=dx/view.scale,moveY=dy/view.scale;moveX=Math.max(...positions.map(p=>-100000-p.x),Math.min(moveX,...positions.map(p=>100000-p.x)));moveY=Math.max(...positions.map(p=>-100000-p.y),Math.min(moveY,...positions.map(p=>100000-p.y)));for(const origin of positions){const node=project.nodes.find(n=>n.id===origin.id);if(!node)continue;node.x=Math.round(origin.x+moveX);node.y=Math.round(origin.y+moveY);const element=document.querySelector(`[data-node="${node.id}"]`);if(element){element.style.left=node.x+'px';element.style.top=node.y+'px';}}moveEdgePaths(drag.movingIds);renderGroupFrames();}
 });
 $('viewport').addEventListener('pointerup',event=>{
   const finished=drag;drag=null;hideMarquee();
@@ -1033,6 +1121,11 @@ document.addEventListener('keydown',event=>{
   if(event.key==='Escape'){clearDropHint();select(null);cancelWire();closeMenus();finishTemporaryPan();$('canvas-hint').textContent='드래그로 다중 선택 · Ctrl+클릭으로 추가 선택 · Space+드래그로 화면 이동';return;}
   if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();exportProject();}
   if(['INPUT','TEXTAREA','SELECT'].includes(event.target.tagName)||document.querySelector('dialog[open]'))return;
+  if(event.ctrlKey&&!event.altKey&&!event.metaKey&&event.key.toLowerCase()==='g'&&selectedIds.size>=2&&!event.target.closest('[contenteditable]')){
+    event.preventDefault();
+    if(!event.repeat)changeSelectionGroup(event.shiftKey);
+    return;
+  }
   if(event.key.toLowerCase()==='v')setTool('select');
   if(event.key.toLowerCase()==='h')setTool('pan');
   if(event.key==='Delete'&&selectedIds.size&&!event.repeat){event.preventDefault();deleteNodes(selectedIds);}
