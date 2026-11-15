@@ -358,19 +358,33 @@ function renderSelectionOutline(){
 }
 function placeSelectionToolbar(){
  const menu=$('selection-layout'),viewport=$('viewport');
- if(!selectionBounds){menu.hidden=true;return;}
+ if(!selectionBounds){menu.hidden=true;closeAlignmentOptions();return;}
  const {left,top,width,height}=selectionBounds;
  const x=view.x+left*view.scale,y=view.y+top*view.scale;
  const right=x+width*view.scale,bottom=y+height*view.scale;
  menu.hidden=right<0||x>viewport.clientWidth||bottom<0||y>viewport.clientHeight;
- if(menu.hidden)return;
+ if(menu.hidden){closeAlignmentOptions();return;}
  const halfWidth=menu.offsetWidth/2,halfHeight=menu.offsetHeight/2;
  const margin=6;
  const center=(x+right)/2;
  const above=y-menu.offsetHeight>=margin;
  const target=above?y-halfHeight:bottom+halfHeight;
  menu.style.left=Math.max(halfWidth+margin,Math.min(center,viewport.clientWidth-halfWidth-margin))+'px';
- menu.style.top=Math.max(halfHeight+margin,Math.min(target,viewport.clientHeight-halfHeight-margin))+'px';
+ const menuY=Math.max(halfHeight+margin,Math.min(target,viewport.clientHeight-halfHeight-margin));
+ menu.style.top=menuY+'px';
+ const options=$('alignment-options');
+ if(!options.hidden){
+  const aboveSpace=menuY-halfHeight-12,belowSpace=viewport.clientHeight-menuY-halfHeight-12;
+  const openUp=belowSpace<options.scrollHeight&&aboveSpace>belowSpace;
+  options.classList.toggle('opens-up',openUp);
+  options.style.maxHeight=Math.max(0,openUp?aboveSpace:belowSpace)+'px';
+ }
+}
+function closeAlignmentOptions(returnFocus=false){
+ $('alignment-options').hidden=true;
+ const toggle=$('alignment-toggle');
+ toggle.setAttribute('aria-expanded','false');
+ if(returnFocus)toggle.focus({preventScroll:true});
 }
 function changeSelectionGroup(ungroup){
  const nodes=selectedNodes();
@@ -386,13 +400,12 @@ function changeSelectionGroup(ungroup){
  }
  changed();
 }
-function layoutSelection(mode){
+function layoutSelection(){
  const nodes=selectedNodes();
  if(nodes.length<2||!editable(nodes.find(node=>nodeLocked(node.id))?.id))return;
- const horizontal=mode==='horizontal';
- const columns=horizontal?nodes.length:mode==='vertical'?1:Math.ceil(Math.sqrt(nodes.length));
+ const columns=Math.ceil(Math.sqrt(nodes.length));
  const lefts=Array(columns).fill(0),rights=Array(columns).fill(0),tops=[],bottoms=[];
- const cards=nodes.sort((a,b)=>horizontal?a.x-b.x||a.y-b.y:a.y-b.y||a.x-b.x).map((node,index)=>{
+ const cards=nodes.sort((a,b)=>a.y-b.y||a.x-b.x).map((node,index)=>{
   const el=document.querySelector(`[data-node="${node.id}"]`);
   const rect=el.getBoundingClientRect();
   const ports=[...el.querySelectorAll('.port')].map(port=>port.getBoundingClientRect());
@@ -431,14 +444,77 @@ function layoutSelection(mode){
  }
  changed();
 }
+function alignSelection(mode){
+ const nodes=selectedNodes();
+ const distribute=mode.endsWith('-gap');
+ if(nodes.length<(distribute?3:2)||!editable(nodes.find(node=>nodeLocked(node.id))?.id))return;
+ const axis=['top','middle','bottom','y-gap'].includes(mode)?'y':'x';
+ const horizontal=axis==='x';
+ const cards=nodes.map(node=>{
+  const el=document.querySelector(`[data-node="${node.id}"]`);
+  const size=horizontal?el.offsetWidth:el.offsetHeight;
+  if(!distribute)return {node,leading:0,trailing:size};
+  const rect=el.getBoundingClientRect();
+  const start=horizontal?'left':'top',end=horizontal?'right':'bottom';
+  const parts=[rect,...[...el.querySelectorAll('.node-header,.port')].map(part=>part.getBoundingClientRect())];
+  return {node,
+   leading:(Math.min(...parts.map(part=>part[start]))-rect[start])/view.scale,
+   trailing:(Math.max(...parts.map(part=>part[end]))-rect[start])/view.scale
+  };
+ });
+ const start=Math.min(...cards.map(card=>card.node[axis]+card.leading));
+ const end=Math.max(...cards.map(card=>card.node[axis]+card.trailing));
+ let positions;
+ if(distribute){
+  cards.sort((a,b)=>a.node[axis]+a.leading-b.node[axis]-b.leading);
+  const total=cards.reduce((sum,card)=>sum+card.trailing-card.leading,0);
+  const gap=Math.max(16,(end-start-total)/(cards.length-1));
+  let cursor=start;
+  positions=cards.map(card=>{
+   const position=cursor-card.leading;
+   cursor+=card.trailing-card.leading+gap;
+   return position;
+  });
+  const min=Math.min(...positions),max=Math.max(...positions);
+  const shift=Math.max(-100000-min,Math.min(0,100000-max));
+  positions=positions.map(position=>position+shift);
+ }else{
+  const fraction=['right','bottom'].includes(mode)?1:['center','middle'].includes(mode)?0.5:0;
+  const anchor=start+(end-start)*fraction;
+  positions=cards.map(card=>anchor-card.trailing*fraction);
+ }
+ if(positions.some(position=>Math.abs(position)>100000)){
+  notify('선택한 카드가 캔버스 범위 안에 들어오도록 정렬할 수 없습니다.',true);
+  return;
+ }
+ if(cards.every((card,index)=>Math.abs(card.node[axis]-positions[index])<0.01))return;
+ cards.forEach((card,index)=>{card.node[axis]=positions[index];});
+ changed();
+}
 $('group-selection').onclick=()=>changeSelectionGroup(false);
 $('ungroup-selection').onclick=()=>changeSelectionGroup(true);
-for(const mode of ['horizontal','vertical','grid'])$('align-'+mode).onclick=()=>layoutSelection(mode);
+$('align-grid').onclick=()=>layoutSelection();
+$('alignment-toggle').onclick=()=>{
+ if(!$('alignment-options').hidden){closeAlignmentOptions();return;}
+ $('alignment-options').hidden=false;
+ $('alignment-toggle').setAttribute('aria-expanded','true');
+ placeSelectionToolbar();
+};
+for(const button of $('selection-layout').querySelectorAll('[data-card-align]')){
+ button.onclick=()=>{
+  if($('alignment-options').contains(button))closeAlignmentOptions(true);
+  alignSelection(button.dataset.cardAlign);
+ };
+}
+document.addEventListener('pointerdown',event=>{
+ if(!event.target.closest('.alignment-disclosure'))closeAlignmentOptions();
+},true);
 function renderSelectionActions(){
  const images=selectedImages();
  const nodes=selectedNodes();
  $('group-selection').disabled=nodes.length<2||isSingleGroup(nodes);
  $('ungroup-selection').disabled=!nodes.some(node=>node.groupId);
+ for(const button of $('alignment-options').querySelectorAll('[data-card-align$="-gap"]'))button.disabled=nodes.length<3;
  $('zip-selection').disabled=exportingSelection||images.length<2;
  $('sheet-selection').disabled=exportingSelection||images.length<2;
 }
@@ -1226,6 +1302,7 @@ document.addEventListener('keydown',event=>{
   if(isImeKey(event))return;
   if(document.body.classList.contains('show-library'))return;
   if((event.ctrlKey||event.metaKey)&&['z','y'].includes(event.key.toLowerCase())&&!event.target.closest('input,textarea,select')&&!document.querySelector('dialog[open]')){event.preventDefault();undoEdit(event.shiftKey||event.key.toLowerCase()==='y');return;}
+  if(event.key==='Escape'&&!$('alignment-options').hidden){event.preventDefault();closeAlignmentOptions(true);return;}
   if(event.key==='Escape'){clearDropHint();select(null);cancelWire();closeMenus();finishTemporaryPan();$('canvas-hint').textContent='드래그로 다중 선택 · Ctrl+클릭으로 추가 선택 · Space+드래그로 화면 이동';return;}
   if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();exportProject();}
   if(['INPUT','TEXTAREA','SELECT'].includes(event.target.tagName)||document.querySelector('dialog[open]'))return;
